@@ -1,0 +1,88 @@
+{
+  "file_name": "PS_20174392719_1491204439457_log.csv",
+  "shape": {
+    "rows": 6362620,
+    "cols": 11
+  },
+  "columns": [
+    "step",
+    "type",
+    "amount",
+    "nameOrig",
+    "oldbalanceOrg",
+    "newbalanceOrig",
+    "nameDest",
+    "oldbalanceDest",
+    "newbalanceDest",
+    "isFraud",
+    "isFlaggedFraud"
+  ],
+  "dtypes": {
+    "step": "int32",
+    "type": "category",
+    "amount": "float64",
+    "nameOrig": "string",
+    "oldbalanceOrg": "float64",
+    "newbalanceOrig": "float64",
+    "nameDest": "string",
+    "oldbalanceDest": "float64",
+    "newbalanceDest": "float64",
+    "isFraud": "int8",
+    "isFlaggedFraud": "int8"
+  },
+  "missing_values": {},
+  "missing_values_total": 0,
+  "duplicate_rows_full": 0,
+  "isFraud_distribution": {
+    "0": 6354407,
+    "1": 8213
+  },
+  "isFraud_rate_pct": 0.12908204481801522,
+  "isFlaggedFraud_distribution": {
+    "0": 6362604,
+    "1": 16
+  },
+  "transaction_types": {
+    "CASH_OUT": 2237500,
+    "PAYMENT": 2151495,
+    "CASH_IN": 1399284,
+    "TRANSFER": 532909,
+    "DEBIT": 41432
+  },
+  "fraud_count_by_type": {
+    "CASH_OUT": 4116,
+    "TRANSFER": 4097,
+    "CASH_IN": 0,
+    "DEBIT": 0,
+    "PAYMENT": 0
+  },
+  "step_min": 1,
+  "step_max": 743,
+  "step_is_sorted_nondecreasing": true,
+  "nameOrig_unique": 6353307,
+  "nameDest_unique": 2722362,
+  "nameOrig_appearing_more_than_once": 9298,
+  "nameOrig_max_repeat": 3,
+  "nameDest_appearing_more_than_once": 459658,
+  "nameDest_max_repeat": 113,
+  "negative_value_rows": {
+    "amount": 0,
+    "oldbalanceOrg": 0,
+    "newbalanceOrig": 0,
+    "oldbalanceDest": 0,
+    "newbalanceDest": 0
+  },
+  "zero_amount_rows": 16,
+  "merchant_dest_rows_total": 2151495,
+  "merchant_dest_with_nonzero_balance_rows": 0,
+  "amount_describe": {
+    "count": 6362620.0,
+    "mean": 179861.90354913071,
+    "std": 603858.2314629357,
+    "min": 0.0,
+    "25%": 13389.57,
+    "50%": 74871.94,
+    "75%": 208721.4775,
+    "max": 92445516.64
+  }
+}

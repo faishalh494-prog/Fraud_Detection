@@ -1,0 +1,44 @@
+{
+  "row_count_preserved": true,
+  "row_order_preserved": true,
+  "isFraud_preserved_identical": true,
+  "raw_columns_untouched_per_column": {
+    "step": true,
+    "type": true,
+    "amount": true,
+    "nameOrig": true,
+    "oldbalanceOrg": true,
+    "newbalanceOrig": true,
+    "nameDest": true,
+    "oldbalanceDest": true,
+    "newbalanceDest": true,
+    "isFraud": true,
+    "isFlaggedFraud": true
+  },
+  "raw_columns_untouched": true,
+  "split_is_chronological": true,
+  "split_row_counts": {
+    "train": 4463587,
+    "val": 980416,
+    "test": 918617
+  },
+  "split_fraud_counts": {
+    "train": 3643,
+    "val": 564,
+    "test": 4006
+  },
+  "split_fraud_rate_pct": {
+    "train": 0.0816,
+    "val": 0.0575,
+    "test": 0.4361
+  },
+  "receiver_count_before_nonnegative": true,
+  "sender_count_before_nonnegative": true,
+  "velocity_leq_lifetime_count": true,
+  "new_receiver_has_zero_prior_count": true,
+  "gold_standard_recompute_steps_sampled": 12,
+  "gold_standard_recompute_rows_checked": 30020,
+  "gold_standard_recompute_mismatches": 0,
+  "gold_standard_recompute_passed": true,
+  "all_passed": true
+}

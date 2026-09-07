@@ -1,0 +1,170 @@
+{
+  "n_rows": 6362620,
+  "n_columns_total_in_processed_file": 34,
+  "engineered_feature_describe": {
+    "hour_of_day": {
+      "count": 6362620.0,
+      "mean": 15.321454212258471,
+      "std": 4.321798994499762,
+      "min": 0.0,
+      "25%": 12.0,
+      "50%": 16.0,
+      "75%": 19.0,
+      "max": 23.0
+    },
+    "day_of_sim": {
+      "count": 6362620.0,
+      "mean": 10.503157975802422,
+      "std": 5.922110971404097,
+      "min": 1.0,
+      "25%": 7.0,
+      "50%": 10.0,
+      "75%": 14.0,
+      "max": 31.0
+    },
+    "is_night": {
+      "count": 6362620.0,
+      "mean": 0.017697898035714848,
+      "std": 0.1318509961022205,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 0.0,
+      "max": 1.0
+    },
+    "amount_log1p": {
+      "count": 6362620.0,
+      "mean": 10.840873718261719,
+      "std": 1.8145095109939575,
+      "min": 0.0,
+      "25%": 9.50230598449707,
+      "50%": 11.22354793548584,
+      "75%": 12.248760461807251,
+      "max": 18.342130661010742
+    },
+    "receiver_txn_count_before": {
+      "count": 6362620.0,
+      "mean": 5.027120745856267,
+      "std": 7.819175537462812,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 1.0,
+      "75%": 7.0,
+      "max": 112.0
+    },
+    "receiver_total_amount_before": {
+      "count": 6362620.0,
+      "mean": 1333361.875,
+      "std": 3161797.0,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 206752.0078125,
+      "75%": 1516806.46875,
+      "max": 357277440.0
+    },
+    "receiver_avg_amount_before": {
+      "count": 6362620.0,
+      "mean": 141162.0,
+      "std": 299250.625,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 99061.8203125,
+      "75%": 215515.515625,
+      "max": 39920572.0
+    },
+    "receiver_steps_since_last": {
+      "count": 6362620.0,
+      "mean": 17.4220014710921,
+      "std": 40.64337708164421,
+      "min": -1.0,
+      "25%": -1.0,
+      "50%": 1.0,
+      "75%": 20.0,
+      "max": 681.0
+    },
+    "receiver_is_new": {
+      "count": 6362620.0,
+      "mean": 0.4353400014459452,
+      "std": 0.4958014957842297,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 1.0,
+      "max": 1.0
+    },
+    "receiver_txn_count_last24_before": {
+      "count": 6362620.0,
+      "mean": 1.0615372283744746,
+      "std": 2.6134601876832773,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 1.0,
+      "max": 91.0
+    },
+    "sender_txn_count_before": {
+      "count": 6362620.0,
+      "mean": 0.0014586758285108964,
+      "std": 0.0382264746187159,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 0.0,
+      "max": 2.0
+    },
+    "sender_is_new": {
+      "count": 6362620.0,
+      "mean": 0.9985436816908758,
+      "std": 0.038133943864489275,
+      "min": 0.0,
+      "25%": 1.0,
+      "50%": 1.0,
+      "75%": 1.0,
+      "max": 1.0
+    }
+  },
+  "missing_values_in_engineered_features": {
+    "hour_of_day": 0,
+    "day_of_sim": 0,
+    "is_night": 0,
+    "amount_log1p": 0,
+    "receiver_txn_count_before": 0,
+    "receiver_total_amount_before": 0,
+    "receiver_avg_amount_before": 0,
+    "receiver_steps_since_last": 0,
+    "receiver_is_new": 0,
+    "receiver_txn_count_last24_before": 0,
+    "sender_txn_count_before": 0,
+    "sender_is_new": 0
+  },
+  "fraud_rate_pct_by_receiver_is_new": {
+    "0": 0.084,
+    "1": 0.1876
+  },
+  "fraud_rate_pct_by_sender_is_new": {
+    "0": 0.1943,
+    "1": 0.129
+  },
+  "fraud_rate_pct_by_type": {
+    "CASH_IN": 0.0,
+    "CASH_OUT": 0.184,
+    "DEBIT": 0.0,
+    "PAYMENT": 0.0,
+    "TRANSFER": 0.7688
+  },
+  "fraud_rate_pct_by_receiver_history_bucket": {
+    "0 (new)": 0.1876,
+    "1": 0.1237,
+    "2-5": 0.095,
+    "6-20": 0.0688,
+    "20+": 0.0622
+  },
+  "fraud_rate_pct_by_diagnostic_orig_fully_drained": {
+    "0": 0.0042,
+    "1": 0.5269
+  },
+  "fraud_rate_pct_by_diagnostic_dest_zero_zero_balance": {
+    "0": 0.0668,
+    "1": 2.4586
+  }
+}
