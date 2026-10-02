@@ -18,6 +18,7 @@ from src.syndicai_v4.modeling import (
     risk_level,
 )
 from src.syndicai_v4.network import NETWORK_FEATURES, build_investigation_network
+from src.syndicai_v4.online_features import OnlineFeatureBuilder
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "processed"
@@ -72,6 +73,7 @@ class RiskService:
 
         self.transactions = ParquetRowStore(self.data_dir / REFERENCE_NAME)
         self.network = ParquetRowStore(network_path)
+        self.online_features = OnlineFeatureBuilder(self.data_dir / REFERENCE_NAME)
         self.bundle = joblib.load(bundle_path)
         self.metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         self.investigations = InvestigationStore(self.artifact_dir / "investigations.sqlite")
@@ -179,4 +181,60 @@ class RiskService:
             ),
             "network_context": history,
             "investigation": self.investigations.get(row_index),
+        }
+
+    def score_transaction(
+        self,
+        transaction: dict[str, Any],
+        model_name: str = "B",
+    ) -> dict[str, Any]:
+        name = model_name.upper()
+        if name not in {"A", "B"}:
+            raise ValueError("Transaction-time scoring supports Model A or B only")
+        values = self.online_features.build(transaction, model=name)
+        feature_frame = pd.DataFrame([values], columns=MODEL_FEATURES[name])
+        score = float(self.bundle[name].predict_proba(feature_frame)[0, 1])
+        threshold = float(self.metrics["models"][name]["validation"]["threshold"])
+        contributions = explain_prediction(self.bundle[name], feature_frame)
+        reasons = [
+            {
+                "feature": reason["feature"],
+                "label": reason["label"],
+                "value": reason["value"],
+                "contribution": round(float(reason["contribution"]), 4),
+                "direction": reason["direction"],
+            }
+            for reason in contributions
+        ]
+        positive_reasons = [reason for reason in reasons if reason["contribution"] > 0][:3]
+        if positive_reasons:
+            explanation_text = "Score-increasing model evidence: " + "; ".join(
+                f"{reason['label']}={reason['value']}"
+                for reason in positive_reasons
+            ) + "."
+        else:
+            explanation_text = "No listed feature increased this model score."
+        behavior = {
+            key: values[key]
+            for key in values
+            if key.startswith("receiver_") or key.startswith("sender_")
+        }
+        return {
+            "model": name,
+            "risk": {
+                "score": round(score * 100, 2),
+                "score_kind": "model score; not a calibrated probability",
+                "risk_level": risk_level(score, threshold),
+                "review_threshold": round(threshold * 100, 2),
+                "flagged_for_review": score >= threshold,
+            },
+            "explanation": {
+                "method": "XGBoost TreeSHAP contributions",
+                "summary": explanation_text,
+                "caveat": "Model evidence supports review; it does not establish fraud.",
+                "reasons": reasons,
+            },
+            "behavioural_evidence": behavior,
+            "features": values,
+            "history_rule": "Only reference transactions with step strictly less than this event were used.",
         }
