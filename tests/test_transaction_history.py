@@ -41,7 +41,7 @@ class TransactionHistoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.history_path = Path(self.temp_dir.name) / "history.sqlite"
-        self.history = TransactionHistory(self.history_path)
+        self.history = TransactionHistory(self.history_path, reference_max_step=0)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -113,17 +113,30 @@ class TransactionHistoryTests(unittest.TestCase):
             ],
             columns=["step", "amount", "nameOrig", "nameDest"],
         ).to_parquet(reference_path)
-        self.history.record_scored_transaction(
-            transaction(2, amount=20.0, sender="online-sender")
+        isolated_history = TransactionHistory(
+            Path(self.temp_dir.name) / "isolated.sqlite",
+            reference_max_step=2,
         )
+        isolated_history.record_scored_transaction(
+            transaction(3, amount=20.0, sender="online-sender")
+        )
+        with isolated_history._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO scored_transactions
+                    (event_id, step, amount, nameOrig, nameDest)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("legacy-overlap", 2, 500.0, "old-sender", "receiver"),
+            )
         builder = OnlineFeatureBuilder(reference_path)
 
         features = builder.build(
-            transaction(3, sender="new-sender"),
-            additional_history=self.history.history_for(
+            transaction(4, sender="new-sender"),
+            additional_history=isolated_history.history_for(
                 sender="new-sender",
                 receiver="receiver",
-                before_step=3,
+                before_step=4,
             ),
         )
 
@@ -131,22 +144,8 @@ class TransactionHistoryTests(unittest.TestCase):
         self.assertEqual(features["receiver_total_amount_before"], 30.0)
         self.assertEqual(features["receiver_avg_amount_before"], 15.0)
 
-    def test_restart_preserves_history_and_event_id_deduplicates(self) -> None:
-        self.history.record_scored_transaction(
-            transaction(4, amount=12.5),
-            event_id="event-1",
-        )
-        restarted = TransactionHistory(self.history_path)
-
-        features = self.build_features(transaction(5), restarted)
-        self.assertEqual(features["receiver_txn_count_before"], 1)
-        self.assertEqual(features["receiver_total_amount_before"], 12.5)
-        with self.assertRaises(DuplicateTransactionError):
-            restarted.ensure_event_is_new("event-1")
-        with self.assertRaises(DuplicateTransactionError):
-            restarted.record_scored_transaction(transaction(5), event_id="event-1")
-
-    def test_service_records_only_after_successful_scoring(self) -> None:
+    @staticmethod
+    def make_scoring_service(history: TransactionHistory, reference_max_step: int) -> RiskService:
         class FeatureBuilder:
             def build(
                 self,
@@ -164,10 +163,58 @@ class TransactionHistoryTests(unittest.TestCase):
                 return np.array([[0.1, 0.9]])
 
         service = RiskService.__new__(RiskService)
-        service.transaction_history = self.history
+        service.reference_max_step = reference_max_step
+        service.transaction_history = history
         service.online_features = FeatureBuilder()
         service.bundle = {"B": Model()}
         service.metrics = {"models": {"B": {"validation": {"threshold": 0.5}}}}
+        return service
+
+    def test_reference_max_step_is_rejected_and_next_step_is_accepted(self) -> None:
+        reference_max_step = 743
+        history = TransactionHistory(
+            Path(self.temp_dir.name) / "boundary.sqlite",
+            reference_max_step=reference_max_step,
+        )
+        service = self.make_scoring_service(history, reference_max_step)
+
+        with self.assertRaisesRegex(ValueError, "greater than the immutable reference maximum step \\(743\\)"):
+            service.score_transaction(transaction(reference_max_step))
+
+        with patch(
+            "src.syndicai_v4.service.explain_prediction",
+            return_value=[],
+        ):
+            result = service.score_transaction(transaction(reference_max_step + 1))
+        self.assertTrue(result["history_updated"])
+        self.assertEqual(
+            len(
+                history.history_for(
+                    sender="sender",
+                    receiver="receiver",
+                    before_step=reference_max_step + 2,
+                )
+            ),
+            1,
+        )
+
+    def test_restart_preserves_history_and_event_id_deduplicates(self) -> None:
+        self.history.record_scored_transaction(
+            transaction(4, amount=12.5),
+            event_id="event-1",
+        )
+        restarted = TransactionHistory(self.history_path, reference_max_step=0)
+
+        features = self.build_features(transaction(5), restarted)
+        self.assertEqual(features["receiver_txn_count_before"], 1)
+        self.assertEqual(features["receiver_total_amount_before"], 12.5)
+        with self.assertRaises(DuplicateTransactionError):
+            restarted.ensure_event_is_new("event-1")
+        with self.assertRaises(DuplicateTransactionError):
+            restarted.record_scored_transaction(transaction(5), event_id="event-1")
+
+    def test_service_records_only_after_successful_scoring(self) -> None:
+        service = self.make_scoring_service(self.history, reference_max_step=0)
         event = transaction(5)
 
         with patch("src.syndicai_v4.service.explain_prediction", return_value=[]):
@@ -179,27 +226,13 @@ class TransactionHistoryTests(unittest.TestCase):
         self.assertEqual(later["sender_txn_count_before"], 1)
 
     def test_service_does_not_record_when_scoring_fails(self) -> None:
-        class FeatureBuilder:
-            def build(
-                self,
-                transaction: dict[str, object],
-                *,
-                model: str,
-                additional_history: pd.DataFrame,
-            ) -> dict[str, int]:
-                del transaction, additional_history
-                return {feature: 0 for feature in MODEL_FEATURES[model]}
-
         class BrokenModel:
             def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
                 del frame
                 raise RuntimeError("inference failed")
 
-        service = RiskService.__new__(RiskService)
-        service.transaction_history = self.history
-        service.online_features = FeatureBuilder()
+        service = self.make_scoring_service(self.history, reference_max_step=0)
         service.bundle = {"B": BrokenModel()}
-        service.metrics = {"models": {"B": {"validation": {"threshold": 0.5}}}}
 
         with self.assertRaisesRegex(RuntimeError, "inference failed"):
             service.score_transaction(transaction(5), event_id="failed")

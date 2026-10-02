@@ -73,10 +73,14 @@ class RiskService:
             )
 
         self.transactions = ParquetRowStore(self.data_dir / REFERENCE_NAME)
+        self.reference_max_step = self._reference_max_step(
+            self.data_dir / REFERENCE_NAME
+        )
         self.network = ParquetRowStore(network_path)
         self.online_features = OnlineFeatureBuilder(self.data_dir / REFERENCE_NAME)
         self.transaction_history = TransactionHistory(
-            self.artifact_dir / "online_history.sqlite"
+            self.artifact_dir / "online_history.sqlite",
+            reference_max_step=self.reference_max_step,
         )
         self.bundle = joblib.load(bundle_path)
         self.metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -85,6 +89,23 @@ class RiskService:
             model: pd.read_parquet(self.artifact_dir / f"test_alerts_{model}.parquet")
             for model in MODEL_FEATURES
         }
+
+    @staticmethod
+    def _reference_max_step(path: Path) -> int:
+        parquet = pq.ParquetFile(path)
+        step_column_index = parquet.schema_arrow.names.index("step")
+        row_group_maxima: list[int] = []
+        for row_group_index in range(parquet.num_row_groups):
+            statistics = parquet.metadata.row_group(row_group_index).column(
+                step_column_index
+            ).statistics
+            if statistics is None or not statistics.has_min_max:
+                steps = pd.read_parquet(path, columns=["step"])["step"]
+                return int(steps.max())
+            row_group_maxima.append(int(statistics.max))
+        if not row_group_maxima:
+            raise ValueError(f"Reference dataset has no rows: {path}")
+        return max(row_group_maxima)
 
     def model_summary(self) -> dict[str, Any]:
         return self.metrics
@@ -197,11 +218,17 @@ class RiskService:
         name = model_name.upper()
         if name not in {"A", "B"}:
             raise ValueError("Transaction-time scoring supports Model A or B only")
+        step = int(transaction["step"])
+        if step <= self.reference_max_step:
+            raise ValueError(
+                "Transaction-time scoring requires step greater than the "
+                f"immutable reference maximum step ({self.reference_max_step})"
+            )
         self.transaction_history.ensure_event_is_new(event_id)
         prior_online_history = self.transaction_history.history_for(
             sender=str(transaction["nameOrig"]),
             receiver=str(transaction["nameDest"]),
-            before_step=int(transaction["step"]),
+            before_step=step,
         )
         values = self.online_features.build(
             transaction,

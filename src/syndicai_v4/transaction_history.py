@@ -19,8 +19,9 @@ class DuplicateTransactionError(ValueError):
 class TransactionHistory:
     """Store scored transaction facts without changing the V1 reference data."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, reference_max_step: int):
         self.path = Path(path)
+        self.reference_max_step = int(reference_max_step)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute(
@@ -101,11 +102,12 @@ class TransactionHistory:
                 """
                 SELECT step, amount, nameOrig, nameDest
                 FROM scored_transactions
-                WHERE step < ?
+                WHERE step > ?
+                  AND step < ?
                   AND (nameOrig = ? OR nameDest = ?)
                 ORDER BY step
                 """,
-                (before_step, sender, receiver),
+                (self.reference_max_step, before_step, sender, receiver),
             ).fetchall()
         return pd.DataFrame(rows, columns=HISTORY_COLUMNS)
 
@@ -117,6 +119,12 @@ class TransactionHistory:
     ) -> None:
         """Persist a successfully scored event for later requests."""
         normalized = self._normalize_event_id(event_id)
+        step = int(transaction["step"])
+        if step <= self.reference_max_step:
+            raise ValueError(
+                "Online history accepts only steps greater than the "
+                f"reference maximum step ({self.reference_max_step})"
+            )
         try:
             with self._connect() as connection:
                 connection.execute(
@@ -127,7 +135,7 @@ class TransactionHistory:
                     """,
                     (
                         normalized,
-                        int(transaction["step"]),
+                        step,
                         float(transaction["amount"]),
                         str(transaction["nameOrig"]),
                         str(transaction["nameDest"]),

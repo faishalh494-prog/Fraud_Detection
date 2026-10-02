@@ -104,9 +104,15 @@ The endpoint reads history from the fixed processed V1 reference dataset and
 adds previously scored online events from a separate local SQLite store at
 `models/online_history.sqlite`. An event is written only after feature
 calculation, risk scoring, and explanation generation complete; the reference
-Parquet files remain read-only. Later requests can use the saved event when its
-step is strictly earlier. Two transactions with the same step never use one
-another as history.
+Parquet files remain read-only. At startup, the service determines the maximum
+step in the reference file; for the supplied local dataset this is step 743.
+`POST /score_transaction` rejects requests with `step <= reference_max_step`
+with HTTP 422, so mutable online events begin strictly after the immutable
+baseline. Historical transactions continue to use `POST /score` unchanged.
+Later online requests can use a saved event only when its step is strictly
+earlier. Two transactions with the same step never use one another as history.
+The SQLite history query also excludes any legacy stored online rows at or
+before the reference maximum, preventing overlap with the baseline.
 
 The optional `event_id` request field enables duplicate protection: a repeated
 ID is rejected with HTTP 409. Without an ID, the API cannot safely infer whether

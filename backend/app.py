@@ -35,7 +35,10 @@ class ScoreRequest(BaseModel):
 class TransactionScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    step: int = Field(ge=1, description="Positive PaySim simulation step")
+    step: int = Field(
+        ge=1,
+        description="Must be greater than the immutable reference dataset maximum step",
+    )
     type: Literal["CASH_IN", "CASH_OUT", "DEBIT", "PAYMENT", "TRANSFER"]
     amount: float = Field(ge=0, allow_inf_nan=False)
     nameOrig: str = Field(min_length=1, max_length=128)
@@ -116,7 +119,7 @@ def score(request: ScoreRequest) -> dict[str, object]:
 
 @app.post("/score_transaction")
 def score_transaction(request: TransactionScoreRequest) -> dict[str, object]:
-    """Score a new event using reference history strictly before its step."""
+    """Score a new event strictly after the immutable reference history."""
     try:
         return _service().score_transaction(
             {
