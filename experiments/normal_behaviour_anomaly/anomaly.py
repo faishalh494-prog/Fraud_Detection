@@ -1,4 +1,4 @@
-"""Normal-behaviour anomaly scoring using prior-only V1 features."""
+"""Offline normal-behaviour anomaly scoring using prior-only V1 features."""
 
 from __future__ import annotations
 

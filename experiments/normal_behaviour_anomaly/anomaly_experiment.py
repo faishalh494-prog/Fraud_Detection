@@ -1,4 +1,4 @@
-"""Controlled B versus B + normal-behaviour anomaly experiment."""
+"""Offline controlled B versus B + normal-behaviour anomaly experiment."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from src.syndicai_v4.anomaly import (
+from experiments.normal_behaviour_anomaly.anomaly import (
     ANOMALY_FEATURES,
     anomaly_metadata,
     causal_training_scores,

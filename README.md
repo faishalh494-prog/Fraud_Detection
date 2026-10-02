@@ -42,19 +42,19 @@ Do not use test metrics to choose a threshold or tune the model. The included
 test-period queue is a demonstration/investigation feed after the final holdout
 evaluation, not live production data.
 
-### Optional normal-behaviour anomaly experiment
+### Offline research: normal-behaviour anomaly
 
-After training the V4 baseline, run the separate experiment:
+The rejected anomaly experiment is maintained outside the production
+`src/syndicai_v4` package. After training the V4 baseline, run:
 
 ```powershell
-python -m src.syndicai_v4.anomaly_experiment
+python -m experiments.normal_behaviour_anomaly.anomaly_experiment
 ```
 
-This fits Isolation Forest models only on legitimate rows from strictly earlier
-training steps, chooses anomaly and augmented-model thresholds on validation,
-and evaluates once on test. It writes results under the ignored
-`models/anomaly_experiment/` directory. It is intentionally not part of the
-inference API unless the measured experiment justifies promotion.
+Methodology and results are documented in
+[experiments/normal_behaviour_anomaly/README.md](experiments/normal_behaviour_anomaly/README.md).
+This offline experiment is not loaded by production inference or the
+investigator interface.
 
 ## Run the product
 
