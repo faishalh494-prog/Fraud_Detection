@@ -50,6 +50,29 @@ class NetworkFeatureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nondecreasing"):
             build_network_features(rows)
 
+    def test_future_role_membership_does_not_change_prior_network_features(self) -> None:
+        prior_rows = pd.DataFrame(
+            {
+                "step": [1, 2],
+                "nameOrig": ["X", "A"],
+                "nameDest": ["Y", "B"],
+            }
+        )
+        with_future_roles = pd.concat(
+            [
+                prior_rows,
+                pd.DataFrame(
+                    {"step": [3, 4], "nameOrig": ["B", "Y"], "nameDest": ["A", "X"]}
+                ),
+            ],
+            ignore_index=True,
+        )
+
+        prior_features = build_network_features(prior_rows)
+        full_features = build_network_features(with_future_roles).iloc[: len(prior_rows)]
+
+        pd.testing.assert_frame_equal(prior_features, full_features)
+
     def test_investigation_context_contains_only_prior_edges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "history.parquet"

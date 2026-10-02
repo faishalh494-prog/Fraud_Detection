@@ -19,7 +19,16 @@ committed to Git.
 
 ## Train and compare
 
-From the repository root with dependencies from `requirements.txt` installed:
+From the repository root, create an environment and install dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Place the supplied validated Parquet files listed above in `data/processed/`.
+Then train and evaluate the V4 models:
 
 ```powershell
 python -m src.syndicai_v4.train
@@ -37,6 +46,12 @@ The measured comparison from the supplied local dataset is summarized in
 run, B and C tied on held-out metrics and none of C's network features was used
 in a tree split, so the investigator desk defaults to B rather than assuming
 the graph inputs help.
+Model B also improved measured test precision, F1, and PR-AUC over Model A
+while producing fewer alerts. NetworkX remains useful for showing prior
+counterparties and relationship context in historical investigations, but the
+recorded Model C comparison does not show predictive gain. The validation-only
+alert-budget trade-offs are in the evaluation report; test alert burden differs
+from its validation target, so it is not a guaranteed investigator workload.
 
 Do not use test metrics to choose a threshold or tune the model. The included
 test-period queue is a demonstration/investigation feed after the final holdout
@@ -55,6 +70,10 @@ Methodology and results are documented in
 [experiments/normal_behaviour_anomaly/README.md](experiments/normal_behaviour_anomaly/README.md).
 This offline experiment is not loaded by production inference or the
 investigator interface.
+On the recorded data, adding its anomaly score did not improve the full-training
+Model B: B + anomaly test PR-AUC was 0.4850 versus 0.5093 for Model B, and the
+anomaly-only signal had PR-AUC 0.0049. It therefore remains a separate
+investigation research result, not a production risk feature.
 
 ## Run the product
 
@@ -94,7 +113,7 @@ Model A/B feature definitions:
 
 ```json
 {
-  "step": 600,
+  "step": 800,
   "type": "TRANSFER",
   "amount": 12500.0,
   "nameOrig": "C123456789",
@@ -131,8 +150,9 @@ restarts, but is local prototype state; there are no streaming, latency, or
 concurrency guarantees. Treat this as a transaction-time inference prototype,
 not a production service.
 
-Example response excerpt from the documented request (the full response also
-includes remaining feature contributions and the model input feature dictionary):
+Illustrative response shape (numeric values vary with the trained artifacts and
+persisted online history; the full response also includes remaining feature
+contributions and the model input feature dictionary):
 
 ```json
 {
@@ -196,3 +216,22 @@ TreeSHAP explanations, persisted investigation states, online feature parity,
 transaction-request validation, and dashboard-facing API routes. The existing
 `tests/validate_output.py` is the separate validation tool for the original V1
 preprocessing outputs.
+
+## Scope and limitations
+
+SyndicAI is an investigator-prioritization prototype evaluated on synthetic
+PaySim data. It does not determine that a transaction is fraudulent and has no
+fraud-recovery, compliance-certification, latency, or production-throughput
+claim. Model B is the current default because behavioural features improved
+measured held-out results over transaction-only Model A, while Model C tied
+Model B and did not use its network features in the recorded run. NetworkX
+context is for analyst investigation, not evidence that Model C improves risk
+ranking. The anomaly detector is a rejected offline experiment and is not
+loaded by production scoring.
+
+Transaction-time state is stored in a local SQLite file under `models/`, which
+is Git-ignored and tied to the local reference dataset/model artifacts. It is
+not a shared or managed event store. `event_id` is optional; duplicate
+protection applies only when callers supply it. Events sharing a step are not
+ordered against one another. The online scorer supports Models A and B only;
+new-event network scoring is not implemented.

@@ -47,19 +47,36 @@ def api_request(path: str, *, method: str = "GET", payload: dict[str, Any] | Non
 st.markdown(
     """
     <style>
-      :root { --ink: #142638; --muted: #6c7d8c; --line: #dce5ea; --accent: #087e8b; }
-      .stApp { background: #f4f7f8; color: var(--ink); }
+      :root { --ink: #142638; --muted: #4e606e; --line: #cbd7de; --accent: #087e8b; }
+      .stApp { background: #f5f7f8; color: var(--ink); }
       [data-testid="stSidebar"] { background: #102735; }
       [data-testid="stSidebar"] * { color: #edf4f6 !important; }
       .desk-kicker { color: #087e8b; font-size: .75rem; font-weight: 750; letter-spacing: .16em; }
-      .desk-title { color: #142638; font-size: 2rem; font-weight: 760; margin: .15rem 0; }
-      .desk-subtitle { color: #6c7d8c; margin-bottom: 1.1rem; }
-      .risk-card { background: white; border: 1px solid #dce5ea; border-radius: 12px;
-                   padding: 1rem 1.15rem; min-height: 112px; }
-      .risk-label { color: #6c7d8c; font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; }
+      .desk-title { color: #142638; font-size: 1.9rem; font-weight: 760; margin: .15rem 0; }
+      .desk-subtitle { color: var(--muted); margin-bottom: .65rem; }
+      .desk-workflows { color: #304454; margin: .2rem 0 1rem; font-size: .92rem; }
+      .risk-card { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--accent);
+                   border-radius: 6px; padding: .9rem 1rem; min-height: 104px; }
+      .risk-label { color: #405565; font-size: .76rem; font-weight: 650;
+                    text-transform: uppercase; letter-spacing: .06em; }
       .risk-value { color: #142638; font-size: 1.55rem; font-weight: 720; margin-top: .25rem; }
-      div[data-testid="stMetric"] { background: white; border: 1px solid #dce5ea;
-                                    border-radius: 12px; padding: 1rem; }
+      [data-testid="stCaptionContainer"] { color: var(--muted); }
+      [data-testid="stWidgetLabel"] p { color: #263d4f; font-weight: 600; }
+      div[data-testid="stMetric"] { background: #fff; border: 1px solid var(--line);
+                                    border-radius: 6px; padding: .75rem .9rem; }
+      div[data-testid="stMetric"] label { color: #405565 !important; }
+      div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #142638; }
+      div[data-testid="stDataFrame"] { border: 1px solid var(--line); }
+      div[data-testid="stExpander"] { border-color: var(--line); border-radius: 6px; }
+      div[data-testid="stTextInput"] input,
+      div[data-testid="stNumberInput"] input,
+      div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+        background: #fff; border-color: #9aabb7; color: #142638;
+      }
+      .stButton button[kind="primary"],
+      .stFormSubmitButton button[kind="primary"] {
+        background: #087e8b; border-color: #087e8b; color: #fff;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -69,6 +86,12 @@ st.markdown('<div class="desk-kicker">SYNDICAI / FRAUD INTELLIGENCE</div>', unsa
 st.markdown('<div class="desk-title">Investigation desk</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="desk-subtitle">Evidence-led review queue · risk scores guide attention, not conclusions</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="desk-workflows">Workflows: '
+    '<a href="#historical-investigation">Historical investigation</a> · '
+    '<a href="#new-transaction-review">New transaction review</a></div>',
     unsafe_allow_html=True,
 )
 
@@ -102,6 +125,7 @@ except RuntimeError as error:
     st.error(str(error))
     st.stop()
 
+st.subheader("Historical investigation", anchor="historical-investigation")
 queue_col, case_col = st.columns([0.92, 1.5], gap="large")
 with queue_col:
     st.subheader("Review queue")
@@ -160,7 +184,7 @@ with case_col:
     header_left, header_right = st.columns([1.5, 1])
     with header_left:
         st.markdown(f"**{transaction['transaction_type']}** · Step {transaction['step']}")
-        st.caption(f"Sender `{transaction['sender']}` → receiver `{transaction['receiver']}`")
+        st.text(f"Sender: {transaction['sender']}  →  Receiver: {transaction['receiver']}")
     with header_right:
         st.markdown(
             f'<div class="risk-card"><div class="risk-label">{risk["level"]}</div>'
@@ -175,7 +199,7 @@ with case_col:
     model_col.metric("Model", f"Model {case['model']}")
     st.caption(risk["score_kind"] + " · No score establishes that an account or transaction is fraudulent.")
 
-    with st.expander("Why did the model flag this?", expanded=True):
+    with st.expander("WHY THIS WAS FLAGGED", expanded=True):
         st.caption(
             f"{case['explanation']['method']}. Contributions show how the listed features moved "
             "this model's raw score; positive values increase it."
@@ -244,7 +268,7 @@ with case_col:
                 st.success(f"Investigation saved · {saved['status']}")
 
 st.divider()
-st.subheader("New transaction review")
+st.subheader("New transaction review", anchor="new-transaction-review")
 st.caption(
     "Submit a new event for API scoring. Its score prioritizes human review; "
     "it is not a fraud verdict. Successfully scored events enter online history."
@@ -329,8 +353,10 @@ else:
                     "A later transaction at a greater step can use it as prior behaviour."
                 )
                 st.markdown(
-                    f"**{new_type}** · Step {int(new_step)} · "
-                    f"Sender `{new_sender.strip()}` → receiver `{new_receiver.strip()}`"
+                    f"**{new_type}** · Step {int(new_step)}"
+                )
+                st.text(
+                    f"Sender: {new_sender.strip()}  →  Receiver: {new_receiver.strip()}"
                 )
                 metric_cols = st.columns(4)
                 metric_cols[0].metric("Model score", f"{risk['score']:.2f}/100")
@@ -347,7 +373,7 @@ else:
                     f"{risk['score_kind']}. A score is not a fraud verdict. "
                     f"{new_case['history_rule']}"
                 )
-                with st.expander("Why did the model flag this?", expanded=True):
+                with st.expander("WHY THIS WAS FLAGGED", expanded=True):
                     st.caption(new_case["explanation"]["summary"])
                     for reason in new_case["explanation"]["reasons"]:
                         st.markdown(
