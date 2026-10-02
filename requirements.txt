@@ -8,3 +8,5 @@ streamlit
 fastapi
 uvicorn
 networkx
+pyarrow
+joblib

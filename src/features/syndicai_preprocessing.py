@@ -34,18 +34,64 @@ outputs (no randomness anywhere in the pipeline).
 """
 
 import argparse
+import ctypes
 import gc
 import json
-import resource
-import sys
+from importlib import import_module
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+resource = None
+try:
+    resource = import_module("resource")
+except ModuleNotFoundError:
+    pass
+
+
+def _windows_peak_rss_mb() -> float:
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    counters = ProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(counters)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    process = kernel32.GetCurrentProcess()
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    psapi.GetProcessMemoryInfo.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessMemoryCounters),
+        wintypes.DWORD,
+    )
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    success = psapi.GetProcessMemoryInfo(
+        process,
+        ctypes.byref(counters),
+        counters.cb,
+    )
+    if not success:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return counters.PeakWorkingSetSize / (1024 * 1024)
+
 
 def _peak_rss_mb() -> float:
+    if resource is None:
+        return _windows_peak_rss_mb()
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 

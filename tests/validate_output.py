@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from syndicai_preprocessing import RAW_DTYPES, RAW_COLUMNS
+from src.features.syndicai_preprocessing import RAW_DTYPES, RAW_COLUMNS
 
 
 def load_raw_cols(path, cols):
