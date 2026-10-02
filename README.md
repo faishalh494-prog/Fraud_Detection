@@ -72,6 +72,15 @@ The Streamlit desk reads scores and investigation details from the FastAPI
 service. Set `SYNDICAI_API_URL` to use a different API URL. Open
 `http://127.0.0.1:8000/docs` for the API reference.
 
+The investigator desk separates historical row-based investigation from
+**New transaction review**. The latter obtains the immutable reference maximum
+step from `GET /transaction_limits`, submits valid new events through
+`POST /score_transaction`, and displays the score, threshold, explanation,
+behavioural evidence, and whether history was updated. Model B is selected by
+default; Model A is also available. A successful event is immediately stored
+in local online history and can contribute to a later event at a strictly
+greater step. This dashboard does not implement scoring or feature logic.
+
 The `POST /score` endpoint continues to score a zero-based row from the
 validated processed reference dataset.
 
@@ -159,7 +168,7 @@ includes remaining feature contributions and the model input feature dictionary)
     "sender_txn_count_before": 0,
     "sender_is_new": 1
   },
-  "history_rule": "Only reference transactions with step strictly less than this event were used."
+  "history_rule": "Only reference and previously scored online transactions with step strictly less than this event were used."
 }
 ```
 
@@ -184,6 +193,6 @@ python -m unittest discover -s tests
 
 Tests cover time-causal graph features, model threshold/evaluation helpers,
 TreeSHAP explanations, persisted investigation states, online feature parity,
-and transaction-request validation. The existing
+transaction-request validation, and dashboard-facing API routes. The existing
 `tests/validate_output.py` is the separate validation tool for the original V1
 preprocessing outputs.

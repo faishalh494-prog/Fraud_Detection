@@ -86,6 +86,15 @@ def models() -> dict[str, object]:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
+@app.get("/transaction_limits")
+def transaction_limits() -> dict[str, int]:
+    """Return the immutable reference boundary for new transaction submissions."""
+    try:
+        return {"reference_max_step": _service().reference_max_step}
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 @app.get("/alerts")
 def alerts(
     model: Literal["A", "B", "C"] = "C",

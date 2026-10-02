@@ -33,7 +33,11 @@ def api_request(path: str, *, method: str = "GET", payload: dict[str, Any] | Non
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         message = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Investigation API returned HTTP {error.code}: {message}") from error
+        try:
+            detail = json.loads(message).get("detail", message)
+        except (json.JSONDecodeError, AttributeError):
+            detail = message
+        raise RuntimeError(f"Investigation API returned HTTP {error.code}: {detail}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(
             f"Cannot reach the FastAPI service at {base_url}. Start the API before opening this desk."
@@ -238,3 +242,133 @@ with case_col:
                 st.error(str(error))
             else:
                 st.success(f"Investigation saved · {saved['status']}")
+
+st.divider()
+st.subheader("New transaction review")
+st.caption(
+    "Submit a new event for API scoring. Its score prioritizes human review; "
+    "it is not a fraud verdict. Successfully scored events enter online history."
+)
+
+try:
+    transaction_limits = api_request("/transaction_limits")
+    reference_max_step = int(transaction_limits["reference_max_step"])
+except (RuntimeError, KeyError, TypeError, ValueError) as error:
+    st.error(f"Cannot load the reference step limit: {error}")
+else:
+    with st.form("new_transaction_review"):
+        transaction_col_1, transaction_col_2 = st.columns(2)
+        with transaction_col_1:
+            new_step = st.number_input(
+                "Step",
+                min_value=reference_max_step + 1,
+                value=reference_max_step + 1,
+                step=1,
+                help=(
+                    "Must be greater than the immutable V1 reference maximum "
+                    f"step ({reference_max_step})."
+                ),
+            )
+            new_type = st.selectbox(
+                "Transaction type",
+                ["TRANSFER", "CASH_OUT", "PAYMENT", "CASH_IN", "DEBIT"],
+            )
+            new_amount = st.number_input(
+                "Amount",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                format="%.2f",
+            )
+        with transaction_col_2:
+            new_sender = st.text_input("Sender account")
+            new_receiver = st.text_input("Receiver account")
+            new_event_id = st.text_input(
+                "Event ID (optional)",
+                help="A repeated ID is rejected to prevent duplicate history updates.",
+            )
+            new_model = st.selectbox(
+                "Scoring model",
+                ["B", "A"],
+                format_func=lambda model: f"Model {model}",
+            )
+        submitted = st.form_submit_button("Score new transaction", type="primary")
+
+    if submitted:
+        if not new_sender.strip() or not new_receiver.strip():
+            st.error("Enter both a sender and receiver account.")
+        else:
+            payload: dict[str, Any] = {
+                "step": int(new_step),
+                "type": new_type,
+                "amount": float(new_amount),
+                "nameOrig": new_sender.strip(),
+                "nameDest": new_receiver.strip(),
+                "model": new_model,
+            }
+            if new_event_id.strip():
+                payload["event_id"] = new_event_id.strip()
+            try:
+                new_case = api_request(
+                    "/score_transaction",
+                    method="POST",
+                    payload=payload,
+                )
+            except RuntimeError as error:
+                message = str(error)
+                if "HTTP 409" in message:
+                    st.error(f"Duplicate event ID: {message}")
+                elif "HTTP 422" in message:
+                    st.error(f"Transaction was not accepted: {message}")
+                else:
+                    st.error(message)
+            else:
+                risk = new_case["risk"]
+                st.success(
+                    "Transaction scored and added to online history. "
+                    "A later transaction at a greater step can use it as prior behaviour."
+                )
+                st.markdown(
+                    f"**{new_type}** · Step {int(new_step)} · "
+                    f"Sender `{new_sender.strip()}` → receiver `{new_receiver.strip()}`"
+                )
+                metric_cols = st.columns(4)
+                metric_cols[0].metric("Model score", f"{risk['score']:.2f}/100")
+                metric_cols[1].metric("Risk level", risk["risk_level"])
+                metric_cols[2].metric(
+                    "Review threshold",
+                    f"{risk['review_threshold']:.2f}/100",
+                )
+                metric_cols[3].metric(
+                    "Review status",
+                    "Flagged" if risk["flagged_for_review"] else "Below threshold",
+                )
+                st.caption(
+                    f"{risk['score_kind']}. A score is not a fraud verdict. "
+                    f"{new_case['history_rule']}"
+                )
+                with st.expander("Why did the model flag this?", expanded=True):
+                    st.caption(new_case["explanation"]["summary"])
+                    for reason in new_case["explanation"]["reasons"]:
+                        st.markdown(
+                            f"- **{reason['label']}** — `{reason['value']}` "
+                            f"({reason['direction']} score; contribution "
+                            f"{reason['contribution']:+.4f})"
+                        )
+                    st.caption(new_case["explanation"]["caveat"])
+                with st.expander("Behavioural evidence used"):
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {"Signal": key.replace("_", " ").title(), "Value": value}
+                                for key, value in new_case["behavioural_evidence"].items()
+                            ]
+                        ),
+                        hide_index=True,
+                        width="stretch",
+                    )
+                st.caption(
+                    "Online history updated · "
+                    f"event ID: {new_event_id.strip() or 'not supplied'} · "
+                    f"history updated: {'yes' if new_case['history_updated'] else 'no'}"
+                )
