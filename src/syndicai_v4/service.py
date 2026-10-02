@@ -19,6 +19,7 @@ from src.syndicai_v4.modeling import (
 )
 from src.syndicai_v4.network import NETWORK_FEATURES, build_investigation_network
 from src.syndicai_v4.online_features import OnlineFeatureBuilder
+from src.syndicai_v4.transaction_history import TransactionHistory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "processed"
@@ -74,6 +75,9 @@ class RiskService:
         self.transactions = ParquetRowStore(self.data_dir / REFERENCE_NAME)
         self.network = ParquetRowStore(network_path)
         self.online_features = OnlineFeatureBuilder(self.data_dir / REFERENCE_NAME)
+        self.transaction_history = TransactionHistory(
+            self.artifact_dir / "online_history.sqlite"
+        )
         self.bundle = joblib.load(bundle_path)
         self.metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         self.investigations = InvestigationStore(self.artifact_dir / "investigations.sqlite")
@@ -187,11 +191,23 @@ class RiskService:
         self,
         transaction: dict[str, Any],
         model_name: str = "B",
+        *,
+        event_id: str | None = None,
     ) -> dict[str, Any]:
         name = model_name.upper()
         if name not in {"A", "B"}:
             raise ValueError("Transaction-time scoring supports Model A or B only")
-        values = self.online_features.build(transaction, model=name)
+        self.transaction_history.ensure_event_is_new(event_id)
+        prior_online_history = self.transaction_history.history_for(
+            sender=str(transaction["nameOrig"]),
+            receiver=str(transaction["nameDest"]),
+            before_step=int(transaction["step"]),
+        )
+        values = self.online_features.build(
+            transaction,
+            model=name,
+            additional_history=prior_online_history,
+        )
         feature_frame = pd.DataFrame([values], columns=MODEL_FEATURES[name])
         score = float(self.bundle[name].predict_proba(feature_frame)[0, 1])
         threshold = float(self.metrics["models"][name]["validation"]["threshold"])
@@ -219,7 +235,7 @@ class RiskService:
             for key in values
             if key.startswith("receiver_") or key.startswith("sender_")
         }
-        return {
+        result = {
             "model": name,
             "risk": {
                 "score": round(score * 100, 2),
@@ -236,5 +252,14 @@ class RiskService:
             },
             "behavioural_evidence": behavior,
             "features": values,
-            "history_rule": "Only reference transactions with step strictly less than this event were used.",
+            "history_rule": (
+                "Only reference and previously scored online transactions with "
+                "step strictly less than this event were used."
+            ),
+            "history_updated": True,
         }
+        self.transaction_history.record_scored_transaction(
+            transaction,
+            event_id=event_id,
+        )
+        return result

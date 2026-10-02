@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.syndicai_v4.modeling import MODEL_FEATURES
 from src.syndicai_v4.service import DEFAULT_ARTIFACT_DIR, DEFAULT_DATA_DIR, RiskService
+from src.syndicai_v4.transaction_history import DuplicateTransactionError
 
 app = FastAPI(
     title="SyndicAI V4",
@@ -39,14 +40,17 @@ class TransactionScoreRequest(BaseModel):
     amount: float = Field(ge=0, allow_inf_nan=False)
     nameOrig: str = Field(min_length=1, max_length=128)
     nameDest: str = Field(min_length=1, max_length=128)
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
     model: Literal["A", "B"] = "B"
 
-    @field_validator("nameOrig", "nameDest")
+    @field_validator("nameOrig", "nameDest", "event_id")
     @classmethod
-    def account_id_must_not_be_whitespace(cls, value: str) -> str:
+    def identifiers_must_not_be_whitespace(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
-            raise ValueError("Account identifiers must not be blank")
+            raise ValueError("Identifiers must not be blank")
         return normalized
 
 
@@ -123,7 +127,10 @@ def score_transaction(request: TransactionScoreRequest) -> dict[str, object]:
                 "nameDest": request.nameDest,
             },
             request.model,
+            event_id=request.event_id,
         )
+    except DuplicateTransactionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:

@@ -100,10 +100,21 @@ and computed sender/receiver behavioural evidence. `model` defaults to `B`;
 current network feature construction depends on full-reference account-role
 membership, including information from later rows.
 
-The endpoint reads history from the fixed processed V1 reference dataset. It
-does not persist scored events into that history or update features as new
-events arrive. Treat it as a transaction-time inference prototype: no latency,
-throughput, or production-readiness claim is made.
+The endpoint reads history from the fixed processed V1 reference dataset and
+adds previously scored online events from a separate local SQLite store at
+`models/online_history.sqlite`. An event is written only after feature
+calculation, risk scoring, and explanation generation complete; the reference
+Parquet files remain read-only. Later requests can use the saved event when its
+step is strictly earlier. Two transactions with the same step never use one
+another as history.
+
+The optional `event_id` request field enables duplicate protection: a repeated
+ID is rejected with HTTP 409. Without an ID, the API cannot safely infer whether
+an identical-looking request is a retry or a distinct transaction, so each
+successful request is recorded as a new event. The SQLite state survives API
+restarts, but is local prototype state; there are no streaming, latency, or
+concurrency guarantees. Treat this as a transaction-time inference prototype,
+not a production service.
 
 Example response excerpt from the documented request (the full response also
 includes remaining feature contributions and the model input feature dictionary):

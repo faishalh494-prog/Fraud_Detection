@@ -156,6 +156,7 @@ class OnlineFeatureBuilder:
         transaction: dict[str, Any],
         *,
         model: str = "B",
+        additional_history: pd.DataFrame | None = None,
     ) -> dict[str, int | float]:
         name = model.upper()
         if name not in {"A", "B"}:
@@ -169,6 +170,11 @@ class OnlineFeatureBuilder:
                 receiver=str(transaction["nameDest"]),
                 step=step,
             )
+            if additional_history is not None and not additional_history.empty:
+                relevant_history = pd.concat(
+                    [relevant_history, additional_history],
+                    ignore_index=True,
+                )
             features.update(
                 build_behavioural_features_from_history(transaction, relevant_history)
             )
