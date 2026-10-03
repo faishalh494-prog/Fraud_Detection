@@ -82,6 +82,38 @@ def select_f1_threshold(labels: np.ndarray, scores: np.ndarray) -> float:
     return float(thresholds[best])
 
 
+def select_alert_budget_threshold(
+    validation_scores: np.ndarray,
+    target_burden: float,
+) -> tuple[float, int]:
+    """Choose the realizable score threshold nearest a validation alert budget."""
+    scores = np.asarray(validation_scores, dtype=np.float64)
+    if scores.ndim != 1 or scores.size == 0:
+        raise ValueError("Validation scores must be a non-empty one-dimensional array")
+    if not 0 < target_burden < 1:
+        raise ValueError("Target alert burden must be between zero and one")
+
+    target_alerts = int(round(target_burden * scores.size))
+    unique_scores, score_counts = np.unique(scores, return_counts=True)
+    descending_scores = unique_scores[::-1]
+    descending_counts = np.cumsum(score_counts[::-1])
+    candidates = [
+        (float(np.nextafter(descending_scores[0], np.inf)), 0),
+        *(
+            (float(threshold), int(alert_count))
+            for threshold, alert_count in zip(descending_scores, descending_counts)
+        ),
+    ]
+    return min(
+        candidates,
+        key=lambda item: (
+            abs(item[1] - target_alerts),
+            item[1] > target_alerts,
+            item[0],
+        ),
+    )
+
+
 def evaluate_scores(labels: np.ndarray, scores: np.ndarray, threshold: float) -> dict[str, Any]:
     predictions = scores >= threshold
     tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()

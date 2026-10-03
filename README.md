@@ -77,7 +77,21 @@ investigation research result, not a production risk feature.
 
 ## Run the product
 
-Start the API and investigator desk in separate terminals:
+The investigator desk reads scores and investigation details from the FastAPI
+service. Set `SYNDICAI_API_URL` to use a different API URL. API requests require
+the same `SYNDICAI_API_KEY` in both process environments; use a randomly
+generated secret of at least 32 characters and keep it out of source code,
+command arguments, screenshots, and logs. The limited `/health` readiness
+endpoint and API schema pages are unauthenticated; investigation and scoring
+operations require the key. Configure the secret through the runtime
+environment, for example by generating it without printing it:
+
+```powershell
+$env:SYNDICAI_API_KEY = (python -c "import secrets; print(secrets.token_urlsafe(32))")
+```
+
+Configure the same value for both processes using your local environment or
+secret manager. Start the API and investigator desk in separate terminals:
 
 ```powershell
 python -m uvicorn backend.app:app --reload
@@ -87,9 +101,10 @@ python -m uvicorn backend.app:app --reload
 python -m streamlit run frontend/streamlit_app.py
 ```
 
-The Streamlit desk reads scores and investigation details from the FastAPI
-service. Set `SYNDICAI_API_URL` to use a different API URL. Open
-`http://127.0.0.1:8000/docs` for the API reference.
+The API
+refuses protected requests when a sufficiently long key is not configured.
+Structured request/action logs exclude the key, account identifiers, and event
+IDs. Open `http://127.0.0.1:8000/docs` for the API reference.
 
 The investigator desk separates historical row-based investigation from
 **New transaction review**. The latter obtains the immutable reference maximum
@@ -99,6 +114,23 @@ behavioural evidence, and whether history was updated. Model B is selected by
 default; Model A is also available. A successful event is immediately stored
 in local online history and can contribute to a later event at a strictly
 greater step. This dashboard does not implement scoring or feature logic.
+The result distinguishes risk score, review priority, and evidence strength;
+calibrated probability is explicitly unavailable. Model B coverage is labelled
+New, Limited history, or Established history from prior sender/receiver event
+counts. Established means at least five prior transactions for both accounts.
+This transparent coverage tier is not a risk-confidence or fraud measure;
+missing or limited history does not indicate low or high fraud risk. Model A
+does not use behavioural history.
+
+New transaction review keeps the existing validation maximum-F1 operating
+point as its default. Model B also offers the five existing alert-budget
+operating points, each selected from validation scores only. The API evaluates
+and caches the selected thresholds against the held-out test period to show
+historical false-positive and workload trade-offs. Selecting another point is
+explicit; it changes only the new-event review threshold and does not change
+model inputs, Model A/B/C evaluation, or historical `/score` results. Test
+volume is historical evidence, not a future workload guarantee. Alternative
+points are never auto-selected.
 
 The `POST /score` endpoint continues to score a zero-based row from the
 validated processed reference dataset.
@@ -122,11 +154,21 @@ Model A/B feature definitions:
 }
 ```
 
-The response includes the model score and review threshold, TreeSHAP reasons,
-and computed sender/receiver behavioural evidence. `model` defaults to `B`;
-`A` is also supported. Model C is not supported for new events because its
+The response includes the risk score, review priority, selected review
+threshold, TreeSHAP reasons, behavioural evidence, and a separate behavioural
+history coverage status. The score is not a calibrated probability; the API
+returns `calibrated_probability: null`. `model` defaults to `B`; `A` is also
+supported. Model C is not supported for new events because its
 current network feature construction depends on full-reference account-role
 membership, including information from later rows.
+
+The optional `operating_point` request field defaults to `max_f1`. Model B
+requests may select `budget_0_10`, `budget_0_25`, `budget_0_50`, `budget_1_00`,
+or `budget_2_00`; thresholds are recomputed from the existing validation split.
+`GET /operating_points` reports validation volumes and historical test outcomes
+including false positives. Model A supports only its existing maximum-F1
+threshold. The test period is evaluated as recorded workload evidence only and
+is not used to select thresholds.
 
 The endpoint reads history from the fixed processed V1 reference dataset and
 adds previously scored online events from a separate local SQLite store at
@@ -157,12 +199,20 @@ contributions and the model input feature dictionary):
 ```json
 {
   "model": "B",
+  "operating_point": "max_f1",
   "risk": {
     "score": 98.59,
     "score_kind": "model score; not a calibrated probability",
-    "risk_level": "High review priority",
+    "calibrated_probability": null,
+    "review_priority": "High review priority",
     "review_threshold": 97.69,
     "flagged_for_review": true
+  },
+  "evidence_strength": {
+    "status": "New",
+    "sender_prior_transactions": 0,
+    "receiver_prior_transactions": 0,
+    "established_history_minimum": 5
   },
   "explanation": {
     "method": "XGBoost TreeSHAP contributions",

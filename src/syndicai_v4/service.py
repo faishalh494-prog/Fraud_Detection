@@ -14,8 +14,10 @@ import pyarrow.parquet as pq
 from src.syndicai_v4.investigations import InvestigationStore
 from src.syndicai_v4.modeling import (
     MODEL_FEATURES,
+    evaluate_scores,
     explain_prediction,
     risk_level,
+    select_alert_budget_threshold,
 )
 from src.syndicai_v4.network import NETWORK_FEATURES, build_investigation_network
 from src.syndicai_v4.online_features import OnlineFeatureBuilder
@@ -25,6 +27,52 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "processed"
 DEFAULT_ARTIFACT_DIR = PROJECT_ROOT / "models"
 REFERENCE_NAME = "syndicai_v1_processed.parquet"
+ALERT_BUDGETS = (
+    ("budget_0_10", "Validation target 0.10%", 0.001),
+    ("budget_0_25", "Validation target 0.25%", 0.0025),
+    ("budget_0_50", "Validation target 0.50%", 0.005),
+    ("budget_1_00", "Validation target 1.00%", 0.01),
+    ("budget_2_00", "Validation target 2.00%", 0.02),
+)
+ESTABLISHED_HISTORY_MINIMUM = 5
+
+
+def history_evidence(
+    model_name: str,
+    features: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe behavioural history coverage without implying model confidence."""
+    name = model_name.upper()
+    if name == "A":
+        return {
+            "status": "Not used",
+            "sender_prior_transactions": None,
+            "receiver_prior_transactions": None,
+            "established_history_minimum": ESTABLISHED_HISTORY_MINIMUM,
+            "interpretation": "Model A does not use behavioural history.",
+        }
+
+    sender_count = int(features.get("sender_txn_count_before", 0))
+    receiver_count = int(features.get("receiver_txn_count_before", 0))
+    if sender_count == 0 and receiver_count == 0:
+        status = "New"
+    elif (
+        sender_count >= ESTABLISHED_HISTORY_MINIMUM
+        and receiver_count >= ESTABLISHED_HISTORY_MINIMUM
+    ):
+        status = "Established history"
+    else:
+        status = "Limited history"
+    return {
+        "status": status,
+        "sender_prior_transactions": sender_count,
+        "receiver_prior_transactions": receiver_count,
+        "established_history_minimum": ESTABLISHED_HISTORY_MINIMUM,
+        "interpretation": (
+            "Coverage describes the available prior behavioural history only; "
+            "limited or absent history is not evidence of low or high fraud risk."
+        ),
+    }
 
 
 class ParquetRowStore:
@@ -73,6 +121,7 @@ class RiskService:
             )
 
         self.transactions = ParquetRowStore(self.data_dir / REFERENCE_NAME)
+        self._operating_points_cache: list[dict[str, Any]] | None = None
         self.reference_max_step = self._reference_max_step(
             self.data_dir / REFERENCE_NAME
         )
@@ -110,6 +159,68 @@ class RiskService:
     def model_summary(self) -> dict[str, Any]:
         return self.metrics
 
+    def alert_operating_points(self) -> list[dict[str, Any]]:
+        """Return Model B policies selected on validation and evaluated on test."""
+        if self._operating_points_cache is not None:
+            return self._operating_points_cache
+
+        validation_path = self.data_dir / "syndicai_v1_val.parquet"
+        test_path = self.data_dir / "syndicai_v1_test.parquet"
+        required = [validation_path, test_path]
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Required validation/test data for alert operating points is missing."
+            )
+
+        features = MODEL_FEATURES["B"]
+        validation = pd.read_parquet(
+            validation_path,
+            columns=["isFraud", *features],
+        )
+        validation_labels = validation.pop("isFraud").to_numpy(dtype=np.int8)
+        validation_scores = self.bundle["B"].predict_proba(validation[features])[:, 1]
+
+        choices: list[tuple[str, str, float, int | None]] = [
+            (
+                "max_f1",
+                "Existing validation maximum-F1 default",
+                float(self.metrics["models"]["B"]["validation"]["threshold"]),
+                None,
+            )
+        ]
+        for policy_id, label, target in ALERT_BUDGETS:
+            threshold, validation_alerts = select_alert_budget_threshold(
+                validation_scores,
+                target,
+            )
+            choices.append((policy_id, label, threshold, validation_alerts))
+
+        test = pd.read_parquet(test_path, columns=["isFraud", *features])
+        test_labels = test.pop("isFraud").to_numpy(dtype=np.int8)
+        test_scores = self.bundle["B"].predict_proba(test[features])[:, 1]
+        result = []
+        for policy_id, label, threshold, validation_alerts in choices:
+            validation_metrics = evaluate_scores(
+                validation_labels,
+                validation_scores,
+                threshold,
+            )
+            test_metrics = evaluate_scores(test_labels, test_scores, threshold)
+            result.append(
+                {
+                    "id": policy_id,
+                    "label": label,
+                    "threshold": threshold,
+                    "validation": validation_metrics,
+                    "test": test_metrics,
+                    "validation_alerts_from_budget_selector": validation_alerts,
+                    "test_workload_is_historical": True,
+                }
+            )
+        self._operating_points_cache = result
+        return result
+
     def alert_queue(self, model: str, limit: int = 100) -> list[dict[str, Any]]:
         name = model.upper()
         if name not in self.alerts:
@@ -124,7 +235,7 @@ class RiskService:
                 "transaction_type": str(row.type),
                 "amount": float(row.amount),
                 "risk_score": round(float(row.risk_score) * 100, 1),
-                "risk_level": str(row.risk_level),
+                "review_priority": str(row.risk_level),
                 "status": str(self.investigations.get(int(row.row_index))["status"]),
             }
             for row in queue.itertuples(index=False)
@@ -187,9 +298,10 @@ class RiskService:
             "risk": {
                 "score": round(score * 100, 2),
                 "score_kind": "model score; not a calibrated probability",
+                "calibrated_probability": None,
                 "review_threshold": round(threshold * 100, 2),
                 "flagged_for_review": score >= threshold,
-                "level": risk_level(score, threshold),
+                "review_priority": risk_level(score, threshold),
             },
             "explanation": {
                 "method": "XGBoost TreeSHAP contributions",
@@ -201,6 +313,7 @@ class RiskService:
                 for key, value in features.items()
                 if key.startswith("receiver_") or key.startswith("sender_")
             },
+            "evidence_strength": history_evidence(name, features),
             "network_features": (
                 {key: int(features[key]) for key in NETWORK_FEATURES} if name == "C" else {}
             ),
@@ -214,10 +327,13 @@ class RiskService:
         model_name: str = "B",
         *,
         event_id: str | None = None,
+        operating_point: str = "max_f1",
     ) -> dict[str, Any]:
         name = model_name.upper()
         if name not in {"A", "B"}:
             raise ValueError("Transaction-time scoring supports Model A or B only")
+        if name == "A" and operating_point != "max_f1":
+            raise ValueError("Alert-budget operating points are available for Model B only")
         step = int(transaction["step"])
         if step <= self.reference_max_step:
             raise ValueError(
@@ -237,7 +353,20 @@ class RiskService:
         )
         feature_frame = pd.DataFrame([values], columns=MODEL_FEATURES[name])
         score = float(self.bundle[name].predict_proba(feature_frame)[0, 1])
-        threshold = float(self.metrics["models"][name]["validation"]["threshold"])
+        if operating_point == "max_f1":
+            threshold = float(self.metrics["models"][name]["validation"]["threshold"])
+        else:
+            selected = next(
+                (
+                    point
+                    for point in self.alert_operating_points()
+                    if point["id"] == operating_point
+                ),
+                None,
+            )
+            if selected is None:
+                raise ValueError("Unknown validation-selected alert operating point")
+            threshold = float(selected["threshold"])
         contributions = explain_prediction(self.bundle[name], feature_frame)
         reasons = [
             {
@@ -264,13 +393,16 @@ class RiskService:
         }
         result = {
             "model": name,
+            "operating_point": operating_point,
             "risk": {
                 "score": round(score * 100, 2),
                 "score_kind": "model score; not a calibrated probability",
-                "risk_level": risk_level(score, threshold),
+                "calibrated_probability": None,
+                "review_priority": risk_level(score, threshold),
                 "review_threshold": round(threshold * 100, 2),
                 "flagged_for_review": score >= threshold,
             },
+            "evidence_strength": history_evidence(name, values),
             "explanation": {
                 "method": "XGBoost TreeSHAP contributions",
                 "summary": explanation_text,

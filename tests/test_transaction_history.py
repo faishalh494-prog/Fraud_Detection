@@ -15,6 +15,7 @@ from src.syndicai_v4.online_features import (
     OnlineFeatureBuilder,
 )
 from src.syndicai_v4.service import RiskService
+from src.syndicai_v4.service import history_evidence
 from src.syndicai_v4.transaction_history import (
     DuplicateTransactionError,
     TransactionHistory,
@@ -81,6 +82,32 @@ class TransactionHistoryTests(unittest.TestCase):
         self.assertEqual(second_features["receiver_steps_since_last"], 1)
         self.assertEqual(second_features["receiver_txn_count_last24_before"], 1)
         self.assertEqual(second_features["sender_txn_count_before"], 1)
+
+    def test_history_evidence_reports_new_limited_and_established_coverage(self) -> None:
+        self.assertEqual(
+            history_evidence(
+                "B",
+                {"sender_txn_count_before": 0, "receiver_txn_count_before": 0},
+            )["status"],
+            "New",
+        )
+        limited = history_evidence(
+            "B",
+            {"sender_txn_count_before": 8, "receiver_txn_count_before": 2},
+        )
+        self.assertEqual(limited["status"], "Limited history")
+        self.assertIn("not evidence of low or high fraud risk", limited["interpretation"])
+        self.assertEqual(
+            history_evidence(
+                "B",
+                {"sender_txn_count_before": 5, "receiver_txn_count_before": 5},
+            )["status"],
+            "Established history",
+        )
+        self.assertEqual(
+            history_evidence("A", {})["status"],
+            "Not used",
+        )
 
     def test_same_step_events_do_not_enter_each_others_history(self) -> None:
         same_step = transaction(10, amount=100.0)
@@ -241,6 +268,38 @@ class TransactionHistoryTests(unittest.TestCase):
             receiver="receiver",
             before_step=6,
         ).empty)
+
+    def test_explanation_failure_does_not_update_persisted_history(self) -> None:
+        service = self.make_scoring_service(self.history, reference_max_step=0)
+        with patch(
+            "src.syndicai_v4.service.explain_prediction",
+            side_effect=RuntimeError("explanation failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "explanation failed"):
+                service.score_transaction(transaction(5), event_id="explanation-failed")
+        self.assertTrue(
+            self.history.history_for(
+                sender="sender",
+                receiver="receiver",
+                before_step=6,
+            ).empty
+        )
+
+    def test_model_a_rejects_model_b_alert_budget_policy_without_recording(self) -> None:
+        service = self.make_scoring_service(self.history, reference_max_step=0)
+        with self.assertRaisesRegex(ValueError, "available for Model B only"):
+            service.score_transaction(
+                transaction(5),
+                "A",
+                operating_point="budget_0_10",
+            )
+        self.assertTrue(
+            self.history.history_for(
+                sender="sender",
+                receiver="receiver",
+                before_step=6,
+            ).empty
+        )
 
     def test_request_accepts_optional_event_id_and_rejects_blank(self) -> None:
         base = {

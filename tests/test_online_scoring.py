@@ -227,6 +227,9 @@ class TransactionScoreRequestTests(unittest.TestCase):
             {**valid, "nameOrig": "   "},
             {**valid, "model": "C"},
             {**valid, "oldbalanceOrg": 100},
+            {**valid, "nameOrig": "account\ninjection"},
+            {**valid, "nameDest": "x" * 129},
+            {**valid, "operating_point": "test-selected"},
         ]
         for case in invalid_cases:
             with self.subTest(case=case), self.assertRaises(ValidationError):

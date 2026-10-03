@@ -4,38 +4,27 @@ import unittest
 
 import numpy as np
 
-from src.syndicai_v4.modeling import evaluate_scores
-
-
-def select_alert_budget_threshold(
-    validation_scores: np.ndarray,
-    target_burden: float,
-) -> tuple[float, int]:
-    """Choose the realizable score threshold nearest a validation alert budget."""
-    scores = np.asarray(validation_scores, dtype=np.float64)
-    if scores.ndim != 1 or scores.size == 0:
-        raise ValueError("Validation scores must be a non-empty one-dimensional array")
-    if not 0 < target_burden < 1:
-        raise ValueError("Target alert burden must be between zero and one")
-
-    target_alerts = int(round(target_burden * scores.size))
-    descending = np.sort(scores)[::-1]
-    boundary = float(descending[min(max(target_alerts - 1, 0), scores.size - 1)])
-    candidates = (boundary, float(np.nextafter(boundary, np.inf)))
-    return min(
-        (
-            (threshold, int(np.count_nonzero(scores >= threshold)))
-            for threshold in candidates
-        ),
-        key=lambda item: (
-            abs(item[1] - target_alerts),
-            item[1] > target_alerts,
-            item[0],
-        ),
-    )
+from src.syndicai_v4.modeling import evaluate_scores, select_alert_budget_threshold
 
 
 class AlertBudgetThresholdTests(unittest.TestCase):
+    def test_selector_chooses_nearest_cutoff_across_repeated_score_groups(self) -> None:
+        scores = np.concatenate(
+            (
+                np.full(964, 0.9657666),
+                np.full(252, 0.9657165),
+                np.full(100, 0.4),
+            )
+        )
+
+        threshold, validation_alerts = select_alert_budget_threshold(
+            scores,
+            980 / len(scores),
+        )
+
+        self.assertEqual(validation_alerts, 964)
+        self.assertAlmostEqual(threshold, 0.9657666)
+
     def test_threshold_uses_validation_only_and_selects_nearest_tied_budget(self) -> None:
         validation_scores = np.array([0.99, 0.98, 0.98, 0.90, 0.70])
 

@@ -65,9 +65,9 @@ the same for every threshold.
 
 | Operating point | Validation threshold | Validation alert burden | Test precision | Test recall | Test F1 | Test PR-AUC | Test alerts | False positives | False negatives | Test alert burden | False positives / 10,000 negatives |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Target 0.10% | 0.965717 | 0.0983% | 0.4370 | 0.4988 | 0.4658 | 0.5093 | 4,572 | 2,574 | 2,008 | 0.4977% | 28.14 |
+| Target 0.10% | 0.965767 | 0.0983% | 0.4373 | 0.4988 | 0.4660 | 0.5093 | 4,569 | 2,571 | 2,008 | 0.4974% | 28.11 |
 | Target 0.25% | 0.959042 | 0.3252% | 0.3607 | 0.5657 | 0.4405 | 0.5093 | 6,283 | 4,017 | 1,740 | 0.6840% | 43.92 |
-| Target 0.50% | 0.941377 | 0.4988% | 0.2996 | 0.6308 | 0.4062 | 0.5093 | 8,435 | 5,908 | 1,479 | 0.9182% | 64.60 |
+| Target 0.50% | 0.941783 | 0.4988% | 0.2997 | 0.6306 | 0.4063 | 0.5093 | 8,428 | 5,902 | 1,480 | 0.9175% | 64.53 |
 | Target 1.00% | 0.910207 | 1.0000% | 0.2169 | 0.7808 | 0.3395 | 0.5093 | 14,419 | 11,291 | 878 | 1.5696% | 123.45 |
 | Target 2.00% | 0.596373 | 2.0000% | 0.1376 | 0.8465 | 0.2368 | 0.5093 | 24,635 | 21,244 | 615 | 2.6817% | 232.27 |
 | Existing validation max-F1 | 0.976926 | 0.0337% | 0.6490 | 0.3984 | 0.4937 | 0.5093 | 2,459 | 863 | 2,410 | 0.2677% | 9.44 |
@@ -82,8 +82,8 @@ the test set remains a holdout.
 
 Relative to maximum F1, the 0.10% validation operating point raises test recall
 from 39.84% to 49.88% and lowers missed frauds from 2,410 to 2,008, but increases
-alerts from 2,459 to 4,572 and false positives from 863 to 2,574. The 0.50%
-point finds 2,527 frauds (63.08% recall) with 8,435 alerts, of which 5,908 are
+alerts from 2,459 to 4,569 and false positives from 863 to 2,571. The 0.50%
+point finds 2,526 frauds (63.06% recall) with 8,428 alerts, of which 5,902 are
 false positives. At 1.00%, recall reaches 78.08% and misses fall to 878, at a
 cost of 14,419 test alerts and 11,291 false positives. The 2.00% point finds
 the most frauds in this comparison (84.65% recall), but generates 24,635 alerts,
@@ -96,6 +96,19 @@ alert budget is not a guaranteed test workload, so investigators should treat
 the test burden shift as a material capacity risk. No alternative threshold is
 recommended or deployed by this analysis: the appropriate workload/coverage
 trade-off requires an explicit investigator capacity decision.
+
+### Operating choices in the investigator desk
+
+The New Transaction workflow now exposes these already-evaluated Model B
+operating points as explicit choices. Its default remains the existing
+validation maximum-F1 threshold. The service derives each alternative cutoff
+from the validation scores only and presents the existing test-period metrics
+as historical observed workload, including false positives. Choosing an
+alternative affects only the review threshold for that new-event request; it
+does not change the trained model, the Model A/B/C metrics, the existing
+threshold artifact, or historical/reference scoring. Alternative points are
+never selected automatically, and the observed test burden is not a promise
+about future alert volume.
 
 The focused selector and metric tests are in
 [`tests/test_alert_budget_evaluation.py`](../tests/test_alert_budget_evaluation.py).
