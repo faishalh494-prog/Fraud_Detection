@@ -240,6 +240,48 @@ class TransactionHistoryTests(unittest.TestCase):
         with self.assertRaises(DuplicateTransactionError):
             restarted.record_scored_transaction(transaction(5), event_id="event-1")
 
+    def test_live_event_details_and_investigation_state_persist(self) -> None:
+        event = transaction(10)
+        result = {
+            "model": "B",
+            "transaction": {
+                "step": 10,
+                "type": "TRANSFER",
+                "amount": 25.0,
+                "sender": "sender",
+                "receiver": "receiver",
+            },
+            "risk": {
+                "score": 72.0,
+                "review_priority": "High review priority",
+                "flagged_for_review": True,
+            },
+        }
+        self.history.record_scored_transaction(
+            event,
+            event_id="case-event",
+            result=result,
+        )
+
+        details = self.history.live_event_details("case-event")
+        self.assertIsNotNone(details)
+        assert details is not None
+        self.assertEqual(details["risk"]["score"], 72.0)
+        self.assertEqual(details["investigation"]["status"], "Open")
+
+        updated = self.history.update_live_investigation(
+            "case-event",
+            status="Investigating",
+            note="Reviewing prior counterparties.",
+        )
+        self.assertIsNotNone(updated)
+        restarted = TransactionHistory(self.history_path, reference_max_step=0)
+        persisted = restarted.get_live_investigation("case-event")
+        self.assertIsNotNone(persisted)
+        assert persisted is not None
+        self.assertEqual(persisted["status"], "Investigating")
+        self.assertEqual(persisted["note"], "Reviewing prior counterparties.")
+
     def test_service_records_only_after_successful_scoring(self) -> None:
         service = self.make_scoring_service(self.history, reference_max_step=0)
         event = transaction(5)

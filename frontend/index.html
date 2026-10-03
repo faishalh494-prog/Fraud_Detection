@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyndicAI — Institutional Transaction Investigation Workstation</title>
+  <meta name="description" content="Explainable transaction fraud investigation workstation with real-time TreeSHAP evidence, causal behavioural history, and AML review actions.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app" class="app-layout">
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-emblem">◈</div>
+        <div class="brand-text">
+          <span class="brand-name">SYNDIC<span class="brand-accent">AI</span></span>
+          <span class="brand-tag">FINANCIAL CRIME DESK</span>
+        </div>
+      </div>
+
+      <div class="system-indicator-box">
+        <div class="indicator-header">
+          <span class="indicator-dot active" id="server-status-dot"></span>
+          <span class="indicator-label" id="server-status-text">CONNECTING</span>
+          <span class="indicator-latency" id="server-latency-text">-- ms</span>
+        </div>
+        <div class="indicator-details">
+          <div class="detail-row">
+            <span class="detail-key">MODEL</span>
+            <span class="detail-val" id="active-model-name">Model B (Default)</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">REF STEPS</span>
+            <span class="detail-val" id="ref-max-step-badge">1 — 743</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="nav-menu" id="main-nav">
+        <button class="nav-item active" id="nav-live" data-view="live">
+          <span class="nav-icon">◬</span>
+          <span class="nav-label">Live Monitor</span>
+          <span class="nav-badge" id="nav-live-count">0</span>
+        </button>
+        <button class="nav-item" id="nav-alerts" data-view="alerts">
+          <span class="nav-icon">▲</span>
+          <span class="nav-label">Alert Queue</span>
+          <span class="nav-badge alert" id="nav-alert-count">2,459</span>
+        </button>
+        <button class="nav-item" id="nav-investigations" data-view="investigations">
+          <span class="nav-icon">▤</span>
+          <span class="nav-label">Investigations</span>
+          <span class="nav-badge" id="nav-cases-count">0</span>
+        </button>
+        <button class="nav-item" id="nav-evidence" data-view="evidence">
+          <span class="nav-icon">◈</span>
+          <span class="nav-label">Model Evidence</span>
+        </button>
+        <button class="nav-item" id="nav-score" data-view="score">
+          <span class="nav-icon">⊕</span>
+          <span class="nav-label">Manual Scoring</span>
+        </button>
+        <button class="nav-item" id="nav-system" data-view="system">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-label">System & Security</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="security-card">
+          <div class="security-header">
+            <span class="sec-icon">🔒</span>
+            <span class="sec-label">API AUTHENTICATED</span>
+          </div>
+          <p class="sec-text">Constant-time HMAC key validation & audit logging active.</p>
+        </div>
+        <div class="version-label">SYNDICAI V4.0 · INSTITUTIONAL CORE</div>
+      </div>
+    </aside>
+
+    <!-- CENTER & RIGHT WORKSPACE -->
+    <div class="workspace-container">
+      <!-- TOP STATUS BAR -->
+      <header class="top-bar" id="top-bar">
+        <div class="stream-summary-bar">
+          <div class="summary-stat">
+            <span class="stat-name">EVENTS SCORED</span>
+            <span class="stat-value" id="stat-total-events">0</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="summary-stat">
+            <span class="stat-name">FLAGGED FOR REVIEW</span>
+            <span class="stat-value alert" id="stat-flagged-events">0</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="summary-stat">
+            <span class="stat-name">LATEST ONLINE STEP</span>
+            <span class="stat-value" id="stat-latest-step">--</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="summary-stat">
+            <span class="stat-name">AVG PROCESSING</span>
+            <span class="stat-value" id="stat-avg-latency">-- ms</span>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <div class="stream-control-group">
+            <button class="control-btn" id="btn-stream-toggle" title="Pause / Resume Live Feed">
+              <span class="btn-icon" id="stream-toggle-icon">⏸</span>
+              <span id="stream-toggle-label">LIVE FEED</span>
+            </button>
+            <button class="control-btn" id="btn-manual-refresh" title="Refresh Now">
+              <span class="btn-icon">↻</span>
+            </button>
+          </div>
+          <div class="api-key-pill" id="btn-open-key-modal" title="Configure API Key">
+            <span class="key-indicator" id="key-configured-dot"></span>
+            <span class="key-label" id="key-status-label">KEY CONFIGURED</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT AREA -->
+      <div class="content-split">
+        <!-- VIEW: LIVE MONITOR (DEFAULT) -->
+        <main class="river-panel view-section active" id="view-live">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h1 class="panel-title">Live Transaction River</h1>
+              <p class="panel-subtitle">Real incoming events scored sequentially · strict temporal causality</p>
+            </div>
+            <div class="panel-filters">
+              <select class="filter-select" id="river-filter-type">
+                <option value="ALL">All Types</option>
+                <option value="TRANSFER">TRANSFER</option>
+                <option value="CASH_OUT">CASH_OUT</option>
+                <option value="PAYMENT">PAYMENT</option>
+                <option value="CASH_IN">CASH_IN</option>
+                <option value="DEBIT">DEBIT</option>
+              </select>
+              <select class="filter-select" id="river-filter-priority">
+                <option value="ALL">All Priorities</option>
+                <option value="FLAGGED">Flagged Review Only</option>
+                <option value="HIGH">High Priority</option>
+                <option value="NORMAL">Normal / Low</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="river-table-container">
+            <table class="river-table" id="river-table">
+              <thead>
+                <tr>
+                  <th style="width: 14%;">EVENT / TIME</th>
+                  <th style="width: 8%;">STEP</th>
+                  <th style="width: 11%;">TYPE</th>
+                  <th style="width: 14%;" class="text-right">AMOUNT</th>
+                  <th style="width: 18%;">SENDER → RECEIVER</th>
+                  <th style="width: 12%;">RISK SCORE</th>
+                  <th style="width: 13%;">REVIEW STATUS</th>
+                  <th style="width: 10%;" class="text-right">LATENCY</th>
+                </tr>
+              </thead>
+              <tbody id="river-table-body">
+                <tr class="empty-row" id="river-loading-row">
+                  <td colspan="8">
+                    <div class="empty-state-box">
+                      <div class="empty-spinner"></div>
+                      <p>Connecting to SyndicAI live stream...</p>
+                      <span class="empty-sub">Submit transactions via demo/live_stream.py or the Manual Scoring tab</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- BOTTOM CONTEXT: LATENCY BREAKDOWN -->
+          <div class="context-bar" id="context-bar">
+            <div class="context-header">
+              <span class="context-title">PIPELINE LATENCY BREAKDOWN (LAST TRANSACTION)</span>
+              <span class="context-caveat">Indexed SQLite lookup + XGBoost Inference + TreeSHAP</span>
+            </div>
+            <div class="latency-grid">
+              <div class="latency-metric">
+                <span class="lat-key">BEHAVIOURAL LOOKUP</span>
+                <span class="lat-val" id="lat-feat">-- ms</span>
+              </div>
+              <div class="latency-metric">
+                <span class="lat-key">XGBOOST INFERENCE</span>
+                <span class="lat-val" id="lat-inf">-- ms</span>
+              </div>
+              <div class="latency-metric">
+                <span class="lat-key">TREESHAP EXPLANATION</span>
+                <span class="lat-val" id="lat-exp">-- ms</span>
+              </div>
+              <div class="latency-metric">
+                <span class="lat-key">STATE UPDATE</span>
+                <span class="lat-val" id="lat-state">-- ms</span>
+              </div>
+              <div class="latency-metric highlight">
+                <span class="lat-key">TOTAL PIPELINE</span>
+                <span class="lat-val" id="lat-total">-- ms</span>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- VIEW: ALERTS (HISTORICAL TEST ALERTS) -->
+        <main class="river-panel view-section" id="view-alerts">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Historical Test Alert Queue</h2>
+              <p class="panel-subtitle">Transactions from held-out test split scoring at or above the validation F1 threshold</p>
+            </div>
+            <div class="panel-filters">
+              <select class="filter-select" id="alert-model-select">
+                <option value="B" selected>Model B (Default)</option>
+                <option value="A">Model A (Transaction signals only)</option>
+                <option value="C">Model C (Transaction + Behaviour + Network)</option>
+              </select>
+            </div>
+          </div>
+          <div class="river-table-container">
+            <table class="river-table" id="alerts-table">
+              <thead>
+                <tr>
+                  <th>ROW INDEX</th>
+                  <th>STEP</th>
+                  <th>TYPE</th>
+                  <th class="text-right">AMOUNT</th>
+                  <th>RISK SCORE</th>
+                  <th>REVIEW PRIORITY</th>
+                  <th>INVESTIGATION STATUS</th>
+                  <th>ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-table-body">
+                <!-- Alert items populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </main>
+
+        <!-- VIEW: INVESTIGATIONS LIST -->
+        <main class="river-panel view-section" id="view-investigations">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Active Investigation Cases</h2>
+              <p class="panel-subtitle">Events marked as Investigating, Escalated, or Closed by analysts</p>
+            </div>
+          </div>
+          <div class="river-table-container">
+            <table class="river-table" id="cases-table">
+              <thead>
+                <tr>
+                  <th>EVENT KEY</th>
+                  <th>STEP</th>
+                  <th>AMOUNT</th>
+                  <th>SENDER → RECEIVER</th>
+                  <th>RISK SCORE</th>
+                  <th>STATUS</th>
+                  <th>ANALYST NOTE</th>
+                  <th>UPDATED AT</th>
+                </tr>
+              </thead>
+              <tbody id="cases-table-body">
+                <!-- Case rows populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </main>
+
+        <!-- VIEW: MODEL EVIDENCE & EVALUATION -->
+        <main class="river-panel view-section" id="view-evidence">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Model Evaluation & Evidence Integrity</h2>
+              <p class="panel-subtitle">Validated metrics, feature gain importance, and network feature documentation</p>
+            </div>
+          </div>
+          <div class="evidence-content-scroll">
+            <div class="evidence-grid">
+              <div class="evidence-card">
+                <div class="card-tag">MODEL ARCHITECTURE COMPARISON</div>
+                <h3 class="card-title">Chronological Test Set Performance</h3>
+                <table class="metrics-table" id="model-comparison-table">
+                  <thead>
+                    <tr>
+                      <th>MODEL</th>
+                      <th>FEATURES</th>
+                      <th>VAL THRESHOLD</th>
+                      <th>TEST F1</th>
+                      <th>TEST PRECISION</th>
+                      <th>TEST RECALL</th>
+                      <th>TEST PR-AUC</th>
+                      <th>ALERTS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="model-metrics-tbody">
+                    <!-- Populated dynamically from GET /models -->
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="evidence-card notice-card">
+                <div class="card-tag notice">EVALUATED EVIDENCE FINDING</div>
+                <h3 class="card-title">Model C Network Feature Zero Gain Analysis</h3>
+                <p class="evidence-para">
+                  SyndicAI evaluated four prior-step graph features: <em>sender prior in-degree</em>, <em>sender in-degree last 24</em>, <em>receiver prior out-degree</em>, and <em>receiver out-degree last 24</em>.
+                </p>
+                <div class="callout-box">
+                  <div class="callout-title">Documented Mathematical Result:</div>
+                  <p class="callout-text">
+                    In tree construction, all four network features received <strong>0.00% gain importance share</strong>.
+                    As a result, Model C test performance (F1=0.4937, PR-AUC=0.5093, Alerts=2,459) was mathematically identical to Model B.
+                    Model B remains the primary production default.
+                  </p>
+                </div>
+              </div>
+
+              <div class="evidence-card">
+                <div class="card-tag">EXPLANATION INTEGRITY</div>
+                <h3 class="card-title">TreeSHAP Log-Odds Contributions Caveat</h3>
+                <p class="evidence-para">
+                  All transaction explanations utilize tree-based Shapley values (TreeSHAP).
+                </p>
+                <ul class="evidence-list">
+                  <li><strong>Model Space:</strong> SHAP contribution values are in log-odds model space, representing the shift in model margin from base value.</li>
+                  <li><strong>Not Probabilities:</strong> Contributions are <em>not</em> percentages or calibrated probabilities.</li>
+                  <li><strong>Evidence vs Proof:</strong> Model evidence identifies suspicious patterns requiring scrutiny; it does not prove fraudulent intent.</li>
+                  <li><strong>Calibrated Probability:</strong> Marked as <em>Not available</em> to prevent misleading false precision.</li>
+                </ul>
+              </div>
+
+              <div class="evidence-card">
+                <div class="card-tag">ALERT BUDGET POLICIES</div>
+                <h3 class="card-title">Validation-Selected Operating Points</h3>
+                <div class="operating-points-list" id="operating-points-list">
+                  <!-- Populated from GET /operating_points -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- VIEW: MANUAL SCORING FORM -->
+        <main class="river-panel view-section" id="view-score">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Transaction Scoring Terminal</h2>
+              <p class="panel-subtitle">Submit a single transaction for real-time inference and TreeSHAP evidence generation</p>
+            </div>
+          </div>
+          <div class="score-form-container">
+            <form class="scoring-form" id="manual-scoring-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="input-step">Step (Chronological Hour)</label>
+                  <input type="number" id="input-step" min="744" required placeholder="e.g. 744">
+                  <span class="field-hint">Must be greater than reference max step (<span id="form-ref-max">743</span>)</span>
+                </div>
+                <div class="form-group">
+                  <label for="input-type">Transaction Type</label>
+                  <select id="input-type" required>
+                    <option value="TRANSFER">TRANSFER</option>
+                    <option value="CASH_OUT">CASH_OUT</option>
+                    <option value="PAYMENT">PAYMENT</option>
+                    <option value="CASH_IN">CASH_IN</option>
+                    <option value="DEBIT">DEBIT</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="input-amount">Amount (USD)</label>
+                  <input type="number" id="input-amount" min="0.01" step="0.01" required placeholder="e.g. 250000.00">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="input-orig">Sender Account (nameOrig)</label>
+                  <input type="text" id="input-orig" required placeholder="e.g. C192830192" maxlength="128">
+                </div>
+                <div class="form-group">
+                  <label for="input-dest">Receiver Account (nameDest)</label>
+                  <input type="text" id="input-dest" required placeholder="e.g. C881920381" maxlength="128">
+                </div>
+                <div class="form-group">
+                  <label for="input-policy">Alert Budget Policy</label>
+                  <select id="input-policy">
+                    <option value="max_f1" selected>Max F1 (Default: 97.69/100)</option>
+                    <option value="budget_0_10">Budget 0.10% (Target 0.001)</option>
+                    <option value="budget_0_25">Budget 0.25% (Target 0.0025)</option>
+                    <option value="budget_0_50">Budget 0.50% (Target 0.005)</option>
+                    <option value="budget_1_00">Budget 1.00% (Target 0.01)</option>
+                    <option value="budget_2_00">Budget 2.00% (Target 0.02)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="primary-btn" id="btn-submit-score">
+                  <span class="btn-text">SCORE TRANSACTION</span>
+                  <span class="btn-spinner" id="scoring-spinner" style="display:none;"></span>
+                </button>
+                <button type="button" class="secondary-btn" id="btn-fill-mule-example">Load Mule Scenario</button>
+                <button type="button" class="secondary-btn" id="btn-fill-routine-example">Load Routine Scenario</button>
+              </div>
+            </form>
+            <div class="score-submission-feedback" id="score-feedback" style="display:none;"></div>
+          </div>
+        </main>
+
+        <!-- VIEW: SYSTEM & SECURITY -->
+        <main class="river-panel view-section" id="view-system">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">System Health & API Configuration</h2>
+              <p class="panel-subtitle">Durable persistence health, cryptographic authentication, and latency profiling</p>
+            </div>
+          </div>
+          <div class="evidence-content-scroll">
+            <div class="evidence-grid">
+              <div class="evidence-card">
+                <div class="card-tag">API AUTHENTICATION KEY</div>
+                <h3 class="card-title">Workstation Credentials</h3>
+                <p class="evidence-para">API key stored in local browser session storage; sent via <code>X-API-Key</code> header.</p>
+                <div class="key-config-row">
+                  <input type="password" id="input-api-key" class="api-key-input" placeholder="Enter 32+ character SYNDICAI_API_KEY">
+                  <button class="primary-btn" id="btn-save-key">Save Key</button>
+                  <button class="secondary-btn" id="btn-toggle-key-visibility">Show</button>
+                </div>
+                <div id="key-feedback-msg" class="key-feedback"></div>
+              </div>
+
+              <div class="evidence-card">
+                <div class="card-tag">SYSTEM READINESS HEALTHCHECK</div>
+                <h3 class="card-title">Artifact Status</h3>
+                <div class="health-checklist" id="health-checklist">
+                  <div class="check-item"><span class="check-icon" id="chk-api">⌛</span> API Health Endpoint (/health)</div>
+                  <div class="check-item"><span class="check-icon" id="chk-parquet">⌛</span> Immutable Reference Parquet (428 MB)</div>
+                  <div class="check-item"><span class="check-icon" id="chk-index">⌛</span> Behavioural SQLite Index Layer</div>
+                  <div class="check-item"><span class="check-icon" id="chk-models">⌛</span> XGBoost Model Bundle (Models A, B, C)</div>
+                  <div class="check-item"><span class="check-icon" id="chk-state">⌛</span> Durable Online Transaction History</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- RIGHT PANEL: TRANSACTION INVESTIGATION WORKSPACE -->
+        <aside class="investigation-workspace" id="investigation-workspace">
+          <div class="workspace-header">
+            <div class="workspace-title-box">
+              <span class="workspace-eyebrow">TRANSACTION INVESTIGATION</span>
+              <h2 class="workspace-event-id" id="ws-event-id">NO EVENT SELECTED</h2>
+              <span class="workspace-timestamp" id="ws-timestamp">Select a transaction to inspect</span>
+            </div>
+            <div class="workspace-status-badge" id="ws-status-badge">STANDBY</div>
+          </div>
+
+          <div class="workspace-scroll-area">
+            <!-- RISK ASSESSMENT BLOCK -->
+            <div class="workspace-card" id="ws-risk-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">RISK ASSESSMENT</span>
+                <span class="ws-score-kind">Model score · Review priority order</span>
+              </div>
+              <div class="risk-display-grid">
+                <div class="risk-score-box">
+                  <div class="score-large-val" id="ws-score-value">--</div>
+                  <div class="score-max-denom">/ 100</div>
+                </div>
+                <div class="risk-meta-box">
+                  <div class="meta-row">
+                    <span class="meta-label">PRIORITY:</span>
+                    <span class="meta-val highlight" id="ws-review-priority">--</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">THRESHOLD:</span>
+                    <span class="meta-val" id="ws-threshold">--</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">REVIEW FLAG:</span>
+                    <span class="meta-val" id="ws-flag-status">--</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="calibrated-prob-warning">
+                <span class="warn-icon">ℹ</span>
+                <div class="warn-content">
+                  <span class="warn-title">Calibrated probability: Not available</span>
+                  <span class="warn-desc">Risk scores represent model review rank; they do not establish fraud or true posterior probability.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- TRANSACTION PARTICULARS -->
+            <div class="workspace-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">TRANSACTION PARTICULARS</span>
+              </div>
+              <div class="particulars-grid">
+                <div class="particular-item">
+                  <span class="part-label">AMOUNT</span>
+                  <span class="part-val" id="ws-tx-amount">--</span>
+                </div>
+                <div class="particular-item">
+                  <span class="part-label">TYPE</span>
+                  <span class="part-val" id="ws-tx-type">--</span>
+                </div>
+                <div class="particular-item">
+                  <span class="part-label">STEP</span>
+                  <span class="part-val" id="ws-tx-step">--</span>
+                </div>
+                <div class="particular-item">
+                  <span class="part-label">SENDER</span>
+                  <span class="part-val mono" id="ws-tx-sender">--</span>
+                </div>
+                <div class="particular-item">
+                  <span class="part-label">RECEIVER</span>
+                  <span class="part-val mono" id="ws-tx-receiver">--</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- MODEL EVIDENCE (TREESHAP) -->
+            <div class="workspace-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">MODEL EVIDENCE (TreeSHAP)</span>
+                <span class="ws-method-tag">XGBoost Log-Odds Margins</span>
+              </div>
+              <p class="ws-caveat">Contributions indicate model feature weight, not proof of fraud. Red increases risk score; teal decreases.</p>
+              <div class="shap-factors-container" id="ws-shap-factors">
+                <div class="no-data-hint">Select a transaction to view SHAP factor contributions</div>
+              </div>
+            </div>
+
+            <!-- BEHAVIOURAL HISTORY CONTEXT -->
+            <div class="workspace-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">BEHAVIOURAL HISTORY CONTEXT</span>
+                <span class="ws-history-badge" id="ws-history-badge">--</span>
+              </div>
+              <p class="ws-caveat" id="ws-history-caveat">History includes only events strictly prior to this transaction's step.</p>
+              <div class="behaviour-grid" id="ws-behaviour-grid">
+                <div class="behaviour-stat">
+                  <span class="b-label">RECEIVER PRIOR TXNS</span>
+                  <span class="b-val" id="ws-b-recv-count">--</span>
+                </div>
+                <div class="behaviour-stat">
+                  <span class="b-label">RECEIVER CUMULATIVE AMT</span>
+                  <span class="b-val" id="ws-b-recv-total">--</span>
+                </div>
+                <div class="behaviour-stat">
+                  <span class="b-label">RECEIVER AVG AMOUNT</span>
+                  <span class="b-val" id="ws-b-recv-avg">--</span>
+                </div>
+                <div class="behaviour-stat">
+                  <span class="b-label">LAST 24 STEPS VELOCITY</span>
+                  <span class="b-val" id="ws-b-recv-vel">--</span>
+                </div>
+                <div class="behaviour-stat">
+                  <span class="b-label">STEPS SINCE LAST ACTIVITY</span>
+                  <span class="b-val" id="ws-b-recv-recency">--</span>
+                </div>
+                <div class="behaviour-stat">
+                  <span class="b-label">SENDER PRIOR TXNS</span>
+                  <span class="b-val" id="ws-b-sender-count">--</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- RELATED ACTIVITY & NETWORK -->
+            <div class="workspace-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">RELATED ACTIVITY & COUNTERPARTIES</span>
+              </div>
+              <div class="network-summary" id="ws-network-summary">
+                <div class="no-data-hint">Select a transaction to inspect counterparty relationships</div>
+              </div>
+            </div>
+
+            <!-- INVESTIGATOR ACTIONS -->
+            <div class="workspace-card action-card">
+              <div class="ws-card-header">
+                <span class="ws-card-title">INVESTIGATOR ACTIONS</span>
+                <span class="action-status-tag" id="ws-action-current-status">STATUS: OPEN</span>
+              </div>
+
+              <div class="action-btn-group">
+                <button class="action-btn" id="btn-act-investigating" data-status="Investigating">Mark Investigating</button>
+                <button class="action-btn alert" id="btn-act-escalate" data-status="Escalated">Escalate to AML</button>
+                <button class="action-btn success" id="btn-act-close" data-status="Closed">Close Case</button>
+                <button class="action-btn secondary" id="btn-act-reopen" data-status="Open">Reopen</button>
+              </div>
+
+              <div class="note-section">
+                <label for="ws-investigation-note" class="note-label">INVESTIGATION NOTES & FINDINGS</label>
+                <textarea id="ws-investigation-note" class="note-textarea" rows="3" placeholder="Enter findings, rationale, or AML case reference..."></textarea>
+                <div class="note-footer">
+                  <span class="note-saved-time" id="ws-note-saved-time">Not saved</span>
+                  <button class="primary-btn" id="btn-save-note">Save Note</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

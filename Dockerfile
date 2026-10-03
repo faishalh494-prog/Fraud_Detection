@@ -10,8 +10,8 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN python -m pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 COPY backend ./backend
 COPY demo ./demo

@@ -325,7 +325,15 @@ class LiveDashboardTests(unittest.TestCase):
                         },
                     }
                     for name in ("A", "B", "C")
-                }
+                },
+                "dataset": {
+                    "split_rows": {"train": 2, "validation": 1, "test": 1},
+                    "split_row_ranges": {
+                        "train": {"start_inclusive": 0, "end_exclusive": 2},
+                        "validation": {"start_inclusive": 2, "end_exclusive": 3},
+                        "test": {"start_inclusive": 3, "end_exclusive": 4},
+                    },
+                },
             }
         if url.endswith("/health"):
             return {"status": "ready"}
@@ -337,6 +345,8 @@ class LiveDashboardTests(unittest.TestCase):
                 "flagged_event_count": 1,
                 "latest_processed_at": "2026-10-03T00:00:00+00:00",
                 "latest_step": 744,
+                "latest_processing_ms": 6.5,
+                "active_model": "B",
                 "reference_max_step": 743,
             }
         if url.endswith("/live/events?limit=50"):
@@ -348,6 +358,11 @@ class LiveDashboardTests(unittest.TestCase):
                         "processing_state": "Processed",
                         "processed_at": "2026-10-03T00:00:00+00:00",
                         "model": "B",
+                        "investigation": {
+                            "status": "Open",
+                            "note": "",
+                            "updated_at": None,
+                        },
                         "risk": {
                             "score": 99.0,
                             "score_kind": "model score; not a calibrated probability",
@@ -395,6 +410,115 @@ class LiveDashboardTests(unittest.TestCase):
                     }
                 ],
             }
+        if url.endswith("/live/events/demo-000004"):
+            return {
+                "event_key": "demo-000004",
+                "processed_at": "2026-10-03T00:00:00+00:00",
+                "transaction": {
+                    "step": 744,
+                    "type": "CASH_OUT",
+                    "amount": 1_000_000.0,
+                    "sender": "sender",
+                    "receiver": "receiver",
+                },
+                "risk": {
+                    "score": 99.0,
+                    "score_kind": "model score; not a calibrated probability",
+                    "calibrated_probability": None,
+                    "review_priority": "High review priority",
+                    "review_threshold": 97.69,
+                    "flagged_for_review": True,
+                },
+                "investigation": {"status": "Open", "note": "", "updated_at": None},
+                "explanation": {
+                    "method": "XGBoost TreeSHAP contributions",
+                    "summary": "Score-increasing evidence.",
+                    "caveat": "Not proof of fraud.",
+                    "reasons": [
+                        {
+                            "feature": "amount",
+                            "label": "Transaction amount",
+                            "value": 1_000_000.0,
+                            "direction": "increases",
+                            "contribution": 0.2,
+                        }
+                    ],
+                },
+                "evidence_strength": {
+                    "status": "Limited history",
+                    "sender_prior_transactions": 3,
+                    "receiver_prior_transactions": 3,
+                    "established_history_minimum": 5,
+                    "interpretation": "Prior-history coverage only.",
+                },
+                "behavioural_evidence": {
+                    "sender_txn_count_before": 3,
+                    "receiver_avg_amount_before": 150.0,
+                    "receiver_txn_count_last24_before": 2,
+                },
+                "related_activity": [],
+                "network_context_scope": "Prior reference context.",
+                "network_context": {
+                    "window_steps": 24,
+                    "observed_edge_count": 0,
+                    "prior_relationship_seen": False,
+                    "sender": {"prior_receivers": []},
+                    "receiver": {"prior_senders": []},
+                },
+                "online_network_context": {
+                    "sender_prior_receivers": [],
+                    "receiver_prior_senders": [],
+                },
+                "timings": {
+                    "feature_ms": 1.0,
+                    "inference_ms": 2.0,
+                    "explanation_ms": 3.0,
+                    "processing_ms": 6.5,
+                },
+            }
+        if url.endswith("/transactions/0?model=B"):
+            return {
+                "row_index": 0,
+                "evaluation_period": "train",
+                "score_context": "Training-period score.",
+                "model": "B",
+                "transaction": {
+                    "step": 1,
+                    "transaction_type": "PAYMENT",
+                    "amount": 25.0,
+                    "sender": "historical-sender",
+                    "receiver": "historical-receiver",
+                },
+                "risk": {
+                    "score": 1.2,
+                    "score_kind": "model score; not a calibrated probability",
+                    "calibrated_probability": None,
+                    "review_threshold": 50.0,
+                    "flagged_for_review": False,
+                    "review_priority": "Low",
+                },
+                "explanation": {
+                    "method": "XGBoost TreeSHAP contributions",
+                    "caveat": "Model evidence is not proof of fraud.",
+                    "reasons": [],
+                },
+                "behaviour": {},
+                "evidence_strength": {
+                    "status": "New",
+                    "sender_prior_transactions": 0,
+                    "receiver_prior_transactions": 0,
+                    "established_history_minimum": 5,
+                    "interpretation": "History availability only.",
+                },
+                "network_features": {},
+                "network_context": {
+                    "observed_edge_count": 0,
+                    "prior_relationship_seen": False,
+                    "sender": {"prior_receivers": []},
+                    "receiver": {"prior_senders": []},
+                },
+                "investigation": {"status": "Open", "note": ""},
+            }
         raise AssertionError(f"Unexpected dashboard request: {url}")
 
     def test_streamlit_live_monitor_workflow_displays_refreshing_scored_event(self) -> None:
@@ -434,7 +558,7 @@ class LiveDashboardTests(unittest.TestCase):
             ).run()
             self.assertFalse(tester.exception)
             self.assertTrue(
-                any("Situational awareness" in item.value for item in tester.markdown)
+                any("What SyndicAI does" in item.value for item in tester.markdown)
             )
             tester.radio(key="dashboard_workflow").set_value("LIVE MONITOR").run()
 
@@ -443,10 +567,57 @@ class LiveDashboardTests(unittest.TestCase):
             any("Live event monitoring" in item.value for item in tester.markdown)
         )
         self.assertTrue(
-            any("demo-000004" in str(item.value) for item in tester.dataframe)
+            any("demo-000004" in item.value for item in tester.caption)
         )
         self.assertTrue(
             any("Automatic refresh every 2 seconds" in item.value for item in tester.caption)
+        )
+
+    def test_historical_investigation_remains_available(self) -> None:
+        class FakeResponse:
+            def __init__(self, body: bytes):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                del args
+                return False
+
+            def read(self) -> bytes:
+                return self.body
+
+        def fake_urlopen(request, timeout=60):
+            del timeout
+            payload = LiveDashboardTests.response_for_url(request.full_url)
+            return FakeResponse(json.dumps(payload).encode("utf-8"))
+
+        root = Path(__file__).resolve().parents[1]
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "SYNDICAI_API_KEY": API_KEY,
+                    "SYNDICAI_API_URL": "http://syndicai.test",
+                },
+            ),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            tester = AppTest.from_file(
+                str(root / "frontend" / "streamlit_app.py"),
+                default_timeout=10,
+            ).run()
+            tester.radio(key="dashboard_workflow").set_value(
+                "HISTORICAL INVESTIGATION"
+            ).run()
+
+        self.assertFalse(tester.exception)
+        self.assertTrue(
+            any("Transaction summary" in item.value for item in tester.markdown)
+        )
+        self.assertTrue(
+            any("historical-sender" in item.value for item in tester.text)
         )
 
 

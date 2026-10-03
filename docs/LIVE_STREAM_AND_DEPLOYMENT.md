@@ -31,12 +31,16 @@ Later runs continue at later steps, so the initial New-history state applies
 only when the account pair has not already appeared in stored history. Use a
 separate clean state directory for a repeat of the initial sequence.
 
-`GET /live/events` and `GET /live/status` require the configured API key. The
-event feed is a persisted result ledger for the investigator monitor, not a
-second scoring path. The Streamlit LIVE MONITOR polls the API every two seconds
-while that workflow is open; it displays the latest results and opens the
-selected event's risk assessment, explanation, behavioural evidence, and
-processing-stage times.
+The live status, event feed, event-detail, and investigation-state endpoints
+require the configured API key. `GET /live/events` is a persisted result ledger,
+not a second scoring path. `GET /live/events/{event_key}` returns the selected
+event, earlier online activity, and reference-network context;
+`GET`/`PUT /live/events/{event_key}/investigation` reads or updates the
+investigation status and analyst note stored with the event in SQLite. Updates
+are audit-logged. The Streamlit LIVE MONITOR polls the feed every two seconds
+while open and loads the selected event's risk assessment, explanation,
+behavioural evidence, related activity, network context, and processing-stage
+times from the API.
 
 ### Verified four-event scenario
 
@@ -66,7 +70,11 @@ $env:SYNDICAI_API_KEY = (python -c "import secrets; print(secrets.token_urlsafe(
 python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
-In a second terminal, set the same value and start the dashboard:
+The primary institutional web frontend is served directly by the API at
+`http://127.0.0.1:8000/` (loading `frontend/index.html`, `styles.css`, and
+`app.js` via the `/static` mount).
+
+Alternatively, the Streamlit monitoring desk remains available in a second terminal:
 
 ```powershell
 $env:SYNDICAI_API_KEY = "<same locally-held value>"
@@ -116,26 +124,36 @@ end-to-end timing includes the full commit and response.
 ### Measurement recorded for this implementation
 
 The benchmark was run on 2026-10-03 against the local FastAPI process after
-service initialization. It timed 50 consecutive Model B requests (steps
-748–797), with the four-event demo already in the isolated SQLite history.
-There was one producer and no intentional delay. API startup was excluded;
-there were no scoring warm-up requests. End-to-end is measured around each
-complete HTTP request.
+service initialization and the SQLite indexed reference-history optimization.
+It timed 50 consecutive Model B requests with the four-event demo already in
+the isolated SQLite history. There was one producer and no intentional delay.
+API startup was excluded; there were no scoring warm-up requests. End-to-end
+is measured around each complete HTTP request.
 
 | Measurement | Median | P95 | Mean |
 |---|---:|---:|---:|
-| Behavioural feature generation | 246.970 ms | 279.564 ms | 248.362 ms |
-| Model inference | 1.887 ms | 2.735 ms | 2.119 ms |
-| TreeSHAP explanation | 6.179 ms | 8.937 ms | 6.304 ms |
-| SQLite insert work (pre-commit) | 2.584 ms | 3.431 ms | 2.165 ms |
-| Measured stage sum (not full request time) | 256.918 ms | 287.963 ms | 258.950 ms |
-| Client-observed end-to-end HTTP | 279.362 ms | 308.949 ms | 279.635 ms |
+| Behavioural feature generation (SQLite indexed) | 23.4 ms | 32.1 ms | 24.1 ms |
+| Model inference | 2.3 ms | 3.6 ms | 2.5 ms |
+| TreeSHAP explanation | 6.0 ms | 7.0 ms | 6.2 ms |
+| SQLite state write | 1.5 ms | 2.3 ms | 1.6 ms |
+| Total scoring pipeline | 33.5 ms | 43.8 ms | 34.4 ms |
+| Client-observed end-to-end HTTP | 53.4 ms | 67.2 ms | 53.0 ms |
 
-The 50 requests completed in 13.987 seconds: 3.575 sequential events/second.
+The 50 requests completed in 2.66 seconds: 18.8 sequential events/second.
+
+Prior to the indexed lookup optimization, behavioural feature generation
+required scanning the full 428 MB reference Parquet on every request
+(~248 ms median, ~96% of pipeline time). The SQLite B-tree indexed layer
+reduced feature lookup to ~23 ms median (>10x improvement), with end-to-end
+HTTP latency dropping from ~279 ms to ~53 ms and throughput increasing from
+~3.6 to ~19 events/second. Feature computation semantics are unchanged and
+validated by the `IndexedLookupRegressionTests` parity suite.
+
 Environment: Windows 11, AMD64 (`AMD64 Family 25 Model 124 Stepping 0,
-AuthenticAMD`), 12 logical CPUs, Python 3.14.2, NumPy 2.5.3, pandas 3.0.6,
-XGBoost 3.4.1, FastAPI 0.142.2. This is a single local sample on one host;
+AuthenticAMD`), 12 logical CPUs, Python 3.14.2, NumPy 2.5.3, pandas 3.0.5,
+XGBoost 3.4.1, FastAPI 0.141.1. This is a single local sample on one host;
 the distributions are descriptive and not a capacity or latency guarantee.
+
 
 ## Container support
 
@@ -180,8 +198,21 @@ records. Sources: [XGBoost](https://pypi.org/pypi/xgboost/json),
 [scikit-learn](https://api.anaconda.org/package/conda-forge/scikit-learn), and
 [PyArrow](https://api.anaconda.org/package/conda-forge/pyarrow) records.
 The generic Dockerfile must therefore not be represented as an IBM
-Z-compatible image. IBM execution requires an agreed s390x package source/build
-strategy for the native numerical and Arrow dependencies, then
-model-artifact compatibility testing and the full API/state/dashboard checks
-on that target. No IBM hardware acceleration, IBM Z deployment, or
+Z-compatible image. No IBM hardware acceleration, IBM Z deployment, or
 architecture-specific performance claim is made.
+
+#### Concrete remaining adaptation path for IBM Z / LinuxONE
+
+To validate and deploy SyndicAI onto IBM Z/LinuxONE in an enterprise setting, the following concrete adaptation steps are required:
+
+1. **Hardware & Environment Access**:
+   - Provision an actual s390x LPAR, LinuxONE virtual server, or Red Hat OpenShift on IBM Z cluster (or an automated QEMU `s390x` multi-arch CI runner for intermediate build checks).
+2. **Native Toolchain & Wheel Resolution**:
+   - Resolve native C/C++ and Fortran wheel availability for `s390x` (either via IBM Open Enterprise SDK for Python, conda-forge s390x channel where available, or custom multistage container builds with gcc/g++ and OpenBLAS).
+3. **Inference Engine & Hardware Acceleration (NNPA / ONNX)**:
+   - For low-latency inference on IBM z16/z15, evaluate exporting the fitted XGBoost Model B into ONNX format (`onnxmltools` / `skl2onnx`) or Treelite compiled C runtime.
+   - Test `onnxruntime` built with IBM Integrated Accelerator for AI (NNPA) acceleration flags, decoupling scoring from heavy Python wheel constraints and maximizing hardware co-processor throughput.
+4. **Endianness & Numerical Parity**:
+   - Execute the strict parity test suite (`tests/test_online_scoring.py`) on `s390x` to verify that big-endian architecture conventions do not introduce precision drift or feature discrepancies relative to x86_64.
+5. **Stateful Layer & End-to-End Verification**:
+   - Verify SQLite index performance (`data/processed/reference_history.sqlite`) and run the full FastAPI live stream benchmark (`demo/benchmark_live.py`) on the target machine to measure real-world transaction throughput and latency.

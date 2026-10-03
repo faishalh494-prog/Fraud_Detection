@@ -11,13 +11,19 @@ import uuid
 from functools import lru_cache
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.syndicai_v4.modeling import MODEL_FEATURES
-from src.syndicai_v4.service import DEFAULT_ARTIFACT_DIR, DEFAULT_DATA_DIR, RiskService
+from src.syndicai_v4.service import (
+    DEFAULT_ARTIFACT_DIR,
+    DEFAULT_DATA_DIR,
+    PROJECT_ROOT,
+    RiskService,
+)
 from src.syndicai_v4.transaction_history import DuplicateTransactionError
 
 logger = logging.getLogger("syndicai.audit")
@@ -47,6 +53,19 @@ app = FastAPI(
     version="4.0.0",
 )
 
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+if FRONTEND_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/dashboard", include_in_schema=False)
+def serve_dashboard() -> Response:
+    index_path = FRONTEND_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="Dashboard frontend not found")
+    return FileResponse(index_path)
+
 
 @app.middleware("http")
 async def api_key_and_request_audit(request: Request, call_next) -> Response:
@@ -55,7 +74,18 @@ async def api_key_and_request_audit(request: Request, call_next) -> Response:
     started_at = time.perf_counter()
     path = request.url.path
 
-    if path not in {"/health", "/docs", "/openapi.json", "/redoc"}:
+    exempt_paths = {
+        "/health",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/",
+        "/dashboard",
+        "/favicon.ico",
+    }
+    if path in exempt_paths or path.startswith("/static/"):
+        response = await call_next(request)
+    else:
         supplied_key = request.headers.get("X-API-Key", "")
         if not _api_key_configured():
             response = JSONResponse(
@@ -70,8 +100,6 @@ async def api_key_and_request_audit(request: Request, call_next) -> Response:
             )
         else:
             response = await call_next(request)
-    else:
-        response = await call_next(request)
 
     duration_ms = (time.perf_counter() - started_at) * 1000
     response.headers["X-Process-Time-Ms"] = f"{duration_ms:.3f}"
@@ -282,6 +310,82 @@ def live_events(
             status_code=503,
             detail="Required live-scoring artifacts are unavailable",
         ) from error
+
+
+@app.get("/live/events/{event_key}")
+def live_event(
+    event_key: str = ApiPath(min_length=1, max_length=128),
+) -> dict[str, object]:
+    """Return one event's persisted score, relationships, and investigation."""
+    try:
+        result = _service().live_event_details(event_key)
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Required live-scoring artifacts are unavailable",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if result is None:
+        raise HTTPException(status_code=404, detail="Live event was not found")
+    return result
+
+
+@app.get("/live/events/{event_key}/investigation")
+def live_investigation(
+    event_key: str = ApiPath(min_length=1, max_length=128),
+) -> dict[str, str]:
+    try:
+        result = _service().live_investigation(event_key)
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Required live-scoring artifacts are unavailable",
+        ) from error
+    if result is None:
+        raise HTTPException(status_code=404, detail="Live event was not found")
+    return result
+
+
+@app.put("/live/events/{event_key}/investigation")
+def update_live_investigation(
+    event_key: str,
+    update: InvestigationUpdate,
+    request: Request,
+) -> dict[str, object]:
+    """Persist investigator status and notes for a live scored event."""
+    if not event_key or len(event_key) > 128 or any(
+        ord(character) < 32 for character in event_key
+    ):
+        raise HTTPException(status_code=422, detail="Invalid live event identifier")
+    try:
+        saved = _service().update_live_investigation(
+            event_key,
+            status=update.status,
+            note=update.note,
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Required live-scoring artifacts are unavailable",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if saved is None:
+        _audit_action(
+            request,
+            action="update_live_investigation",
+            success=False,
+            reason="event_not_found",
+        )
+        raise HTTPException(status_code=404, detail="Live event was not found")
+    _audit_action(
+        request,
+        action="update_live_investigation",
+        success=True,
+        status=update.status,
+    )
+    return saved
 
 
 @app.get("/alerts")

@@ -23,9 +23,10 @@ From the repository root, create an environment and install dependencies:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -c constraints.txt
 ```
+
+For reproducible builds matching the validated test environment, `constraints.txt` pins exact dependency versions.
 
 Place the supplied validated Parquet files listed above in `data/processed/`.
 Then train and evaluate the V4 models:
@@ -90,12 +91,16 @@ environment, for example by generating it without printing it:
 $env:SYNDICAI_API_KEY = (python -c "import secrets; print(secrets.token_urlsafe(32))")
 ```
 
-Configure the same value for both processes using your local environment or
-secret manager. Start the API and investigator desk in separate terminals:
+Configure the key in your local environment or secret manager.
+
+Start the FastAPI application, which directly serves the primary institutional
+analyst frontend at `http://127.0.0.1:8000/`:
 
 ```powershell
 python -m uvicorn backend.app:app --reload
 ```
+
+Optionally, the Streamlit monitoring desk remains available in a separate terminal:
 
 ```powershell
 python -m streamlit run frontend/streamlit_app.py

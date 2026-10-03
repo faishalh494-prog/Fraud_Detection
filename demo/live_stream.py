@@ -13,10 +13,21 @@ import uuid
 from typing import Any, Iterator
 
 DEMO_TRANSACTIONS = (
-    ("PAYMENT", 5.0),
-    ("PAYMENT", 8.0),
-    ("CASH_OUT", 5_000.0),
-    ("CASH_OUT", 1_000_000.0),
+    # 1-4: Canonical evaluated four-event scenario (validates new history -> alert progression)
+    {"type": "PAYMENT", "amount": 5.0, "nameOrig": "DEMO-SENDER-001", "nameDest": "DEMO-RECEIVER-001"},
+    {"type": "PAYMENT", "amount": 8.0, "nameOrig": "DEMO-SENDER-001", "nameDest": "DEMO-RECEIVER-001"},
+    {"type": "CASH_OUT", "amount": 5_000.0, "nameOrig": "DEMO-SENDER-001", "nameDest": "DEMO-RECEIVER-001"},
+    {"type": "CASH_OUT", "amount": 1_000_000.0, "nameOrig": "DEMO-SENDER-001", "nameDest": "DEMO-RECEIVER-001"},
+    # 5-8: Legitimate commercial, peer-to-peer, and merchant operational flows
+    {"type": "PAYMENT", "amount": 42.50, "nameOrig": "C104928190", "nameDest": "M882194012"},
+    {"type": "TRANSFER", "amount": 1_250.0, "nameOrig": "C391024819", "nameDest": "C401928371"},
+    {"type": "DEBIT", "amount": 180.0, "nameOrig": "C581920381", "nameDest": "C991823741"},
+    {"type": "CASH_IN", "amount": 3_500.0, "nameOrig": "C771829301", "nameDest": "C882710394"},
+    # 9-12: High-velocity suspected mule drain and large anomalous transfer
+    {"type": "TRANSFER", "amount": 75_000.0, "nameOrig": "C661928301", "nameDest": "C228192041"},
+    {"type": "CASH_OUT", "amount": 75_000.0, "nameOrig": "C228192041", "nameDest": "C449102831"},
+    {"type": "TRANSFER", "amount": 450_000.0, "nameOrig": "C991028341", "nameDest": "C338192019"},
+    {"type": "PAYMENT", "amount": 15.20, "nameOrig": "C112938401", "nameDest": "M192837461"},
 )
 SENDER = "DEMO-SENDER-001"
 RECEIVER = "DEMO-RECEIVER-001"
@@ -32,13 +43,13 @@ def build_event(
     """Build the next label-free event; sequence numbers map to unique steps."""
     if sequence < 0:
         raise ValueError("sequence must be non-negative")
-    transaction_type, amount = DEMO_TRANSACTIONS[sequence % len(DEMO_TRANSACTIONS)]
+    spec = DEMO_TRANSACTIONS[sequence % len(DEMO_TRANSACTIONS)]
     return {
         "step": first_step + sequence,
-        "type": transaction_type,
-        "amount": amount,
-        "nameOrig": SENDER,
-        "nameDest": RECEIVER,
+        "type": spec["type"],
+        "amount": spec["amount"],
+        "nameOrig": spec["nameOrig"],
+        "nameDest": spec["nameDest"],
         "event_id": f"{run_id}-{sequence + 1:06d}",
         "model": "B",
         "operating_point": "max_f1",

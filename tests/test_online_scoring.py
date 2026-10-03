@@ -236,5 +236,144 @@ class TransactionScoreRequestTests(unittest.TestCase):
                 TransactionScoreRequest.model_validate(case)
 
 
+class IndexedLookupRegressionTests(unittest.TestCase):
+    @unittest.skipUnless(REFERENCE_PATH.is_file(), "Local reference parquet required")
+    def test_indexed_lookup_parity_with_parquet_scan(self) -> None:
+        builder = OnlineFeatureBuilder(REFERENCE_PATH)
+        parquet = pq.ParquetFile(REFERENCE_PATH)
+        rng = np.random.default_rng(999)
+        sample_group_ids = rng.choice(
+            parquet.num_row_groups,
+            size=min(25, parquet.num_row_groups),
+            replace=False,
+        )
+        for gid in sample_group_ids:
+            group = parquet.read_row_group(int(gid), columns=["step", "amount", "nameOrig", "nameDest", "type"])
+            row = group.slice(int(rng.integers(0, group.num_rows)), 1).to_pylist()[0]
+            event = {
+                "step": row["step"],
+                "type": row["type"],
+                "amount": row["amount"],
+                "nameOrig": row["nameOrig"],
+                "nameDest": row["nameDest"],
+            }
+            # Compare SQLite indexed lookup vs legacy Parquet scan
+            indexed_history = builder._account_history(
+                sender=row["nameOrig"],
+                receiver=row["nameDest"],
+                step=int(row["step"]),
+            )
+            parquet_history = builder._account_history_parquet(
+                sender=row["nameOrig"],
+                receiver=row["nameDest"],
+                step=int(row["step"]),
+            )
+            indexed_features = build_behavioural_features_from_history(event, indexed_history)
+            parquet_features = build_behavioural_features_from_history(event, parquet_history)
+
+            for feat in BEHAVIOUR_FEATURES:
+                v_idx = indexed_features[feat]
+                v_pq = parquet_features[feat]
+                if isinstance(v_idx, float):
+                    self.assertAlmostEqual(v_idx, v_pq, places=3, msg=f"Feature {feat} mismatch for {event}")
+                else:
+                    self.assertEqual(v_idx, v_pq, f"Feature {feat} mismatch for {event}")
+
+    def test_indexed_lookup_unseen_accounts(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_parquet = Path(tmp_dir) / "ref.parquet"
+            # Create minimal reference parquet
+            df = pd.DataFrame(
+                [(1, 100.0, "accA", "accB")],
+                columns=HISTORY_COLUMNS,
+            )
+            df.to_parquet(tmp_parquet)
+            builder = OnlineFeatureBuilder(tmp_parquet)
+
+            event = transaction(step=5, sender="UNKNOWN_1", receiver="UNKNOWN_2")
+            features = builder.build(event, model="B")
+            self.assertEqual(features["receiver_is_new"], 1)
+            self.assertEqual(features["sender_is_new"], 1)
+            self.assertEqual(features["receiver_txn_count_before"], 0)
+            self.assertEqual(features["sender_txn_count_before"], 0)
+            self.assertEqual(features["receiver_steps_since_last"], -1)
+
+    def test_indexed_lookup_same_step_and_future_exclusion(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_parquet = Path(tmp_dir) / "ref.parquet"
+            df = pd.DataFrame(
+                [
+                    (1, 50.0, "alice", "bob"),
+                    (5, 100.0, "alice", "bob"),  # same step
+                    (6, 200.0, "alice", "bob"),  # future step
+                ],
+                columns=HISTORY_COLUMNS,
+            )
+            df.to_parquet(tmp_parquet)
+            builder = OnlineFeatureBuilder(tmp_parquet)
+
+            event = transaction(step=5, sender="alice", receiver="bob", amount=75.0)
+            features = builder.build(event, model="B")
+
+            # Only step 1 should be included
+            self.assertEqual(features["receiver_txn_count_before"], 1)
+            self.assertEqual(features["sender_txn_count_before"], 1)
+            self.assertEqual(features["receiver_total_amount_before"], 50.0)
+            self.assertEqual(features["receiver_steps_since_last"], 4)
+
+    def test_indexed_lookup_multiple_earlier_events(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_parquet = Path(tmp_dir) / "ref.parquet"
+            df = pd.DataFrame(
+                [
+                    (10, 100.0, "sender1", "mule"),
+                    (12, 200.0, "sender2", "mule"),
+                    (20, 300.0, "sender1", "mule"),
+                ],
+                columns=HISTORY_COLUMNS,
+            )
+            df.to_parquet(tmp_parquet)
+            builder = OnlineFeatureBuilder(tmp_parquet)
+
+            event = transaction(step=25, sender="sender1", receiver="mule", amount=50.0)
+            features = builder.build(event, model="B")
+
+            self.assertEqual(features["receiver_txn_count_before"], 3)
+            self.assertEqual(features["receiver_total_amount_before"], 600.0)
+            self.assertEqual(features["receiver_avg_amount_before"], 200.0)
+            self.assertEqual(features["receiver_steps_since_last"], 5)  # 25 - 20
+            self.assertEqual(features["sender_txn_count_before"], 2)
+            self.assertEqual(features["receiver_is_new"], 0)
+            self.assertEqual(features["sender_is_new"], 0)
+
+    def test_indexed_lookup_restart_and_persistence(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_parquet = Path(tmp_dir) / "ref.parquet"
+            tmp_sqlite = Path(tmp_dir) / "ref.sqlite"
+            df = pd.DataFrame(
+                [(2, 42.0, "orig", "dest")],
+                columns=HISTORY_COLUMNS,
+            )
+            df.to_parquet(tmp_parquet)
+
+            # First instance builds SQLite
+            builder1 = OnlineFeatureBuilder(tmp_parquet, index_path=tmp_sqlite)
+            feat1 = builder1.build(transaction(step=10, sender="orig", receiver="dest"), model="B")
+            self.assertTrue(tmp_sqlite.is_file())
+
+            # Second instance loads existing SQLite
+            mtime_before = tmp_sqlite.stat().st_mtime
+            builder2 = OnlineFeatureBuilder(tmp_parquet, index_path=tmp_sqlite)
+            mtime_after = tmp_sqlite.stat().st_mtime
+            # Should not recreate file
+            self.assertEqual(mtime_before, mtime_after)
+            feat2 = builder2.build(transaction(step=10, sender="orig", receiver="dest"), model="B")
+            self.assertEqual(feat1, feat2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 import numpy as np
@@ -110,13 +112,81 @@ def build_behavioural_features_from_history(
     }
 
 
-class OnlineFeatureBuilder:
-    """Build online Model A/B features using the processed reference history."""
+def build_reference_history_index(
+    reference_path: str | Path,
+    index_path: str | Path,
+) -> Path:
+    """Build a compact, indexed SQLite layer from the reference parquet dataset."""
+    import sqlite3
+    import pyarrow.parquet as pq
 
-    def __init__(self, reference_path: str | Path):
+    ref = Path(reference_path)
+    if not ref.is_file():
+        raise FileNotFoundError(f"Reference dataset not found: {ref}")
+
+    target = Path(index_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_target = target.with_suffix(f".tmp.{os.getpid()}.sqlite")
+    if tmp_target.is_file():
+        tmp_target.unlink()
+
+    table = pq.read_table(ref, columns=HISTORY_COLUMNS)
+    df = table.to_pandas()
+
+    conn = sqlite3.connect(tmp_target)
+    try:
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA cache_size = 50000")
+        conn.execute(
+            """
+            CREATE TABLE reference_transactions (
+                step INTEGER NOT NULL,
+                amount REAL NOT NULL,
+                nameOrig TEXT NOT NULL,
+                nameDest TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO reference_transactions (step, amount, nameOrig, nameDest) VALUES (?, ?, ?, ?)",
+            df.itertuples(index=False, name=None),
+        )
+        conn.commit()
+        conn.execute(
+            "CREATE INDEX idx_ref_orig_step ON reference_transactions (nameOrig, step)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_ref_dest_step ON reference_transactions (nameDest, step)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    tmp_target.replace(target)
+    return target
+
+
+class OnlineFeatureBuilder:
+    """Build online Model A/B features using an indexed lookup layer over reference history."""
+
+    def __init__(
+        self,
+        reference_path: str | Path,
+        index_path: str | Path | None = None,
+    ):
+        import threading
+
         self.reference_path = Path(reference_path)
         if not self.reference_path.is_file():
             raise FileNotFoundError(f"Processed reference dataset not found: {self.reference_path}")
+        if index_path is not None:
+            self.index_path = Path(index_path)
+        else:
+            self.index_path = self.reference_path.with_name("reference_history.sqlite")
+
+        if not self.index_path.is_file():
+            build_reference_history_index(self.reference_path, self.index_path)
 
     @staticmethod
     def _transaction_features(transaction: dict[str, Any]) -> dict[str, int | float]:
@@ -135,13 +205,14 @@ class OnlineFeatureBuilder:
             features[f"type_{category}"] = int(transaction_type == category)
         return features
 
-    def _account_history(
+    def _account_history_parquet(
         self,
         *,
         sender: str,
         receiver: str,
         step: int,
     ) -> pd.DataFrame:
+        """Legacy Parquet scan path retained for parity checks and regression validation."""
         return pd.read_parquet(
             self.reference_path,
             columns=HISTORY_COLUMNS,
@@ -150,6 +221,32 @@ class OnlineFeatureBuilder:
                 [("nameOrig", "==", sender), ("step", "<", step)],
             ],
         )
+
+    def _account_history(
+        self,
+        *,
+        sender: str,
+        receiver: str,
+        step: int,
+    ) -> pd.DataFrame:
+        conn = sqlite3.connect(str(self.index_path), timeout=30.0)
+        try:
+            cursor = conn.execute(
+                """
+                SELECT step, amount, nameOrig, nameDest
+                FROM reference_transactions
+                WHERE nameOrig = ? AND step < ?
+                UNION
+                SELECT step, amount, nameOrig, nameDest
+                FROM reference_transactions
+                WHERE nameDest = ? AND step < ?
+                """,
+                (sender, step, receiver, step),
+            )
+            rows = cursor.fetchall()
+            return pd.DataFrame(rows, columns=HISTORY_COLUMNS)
+        finally:
+            conn.close()
 
     def build(
         self,

@@ -171,6 +171,39 @@ class RiskService:
     def recent_live_events(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.transaction_history.recent_live_events(limit)
 
+    def live_event_details(self, event_key: str) -> dict[str, Any] | None:
+        event = self.transaction_history.live_event_details(event_key)
+        if event is None:
+            return None
+        transaction = event["transaction"]
+        event["network_context"] = build_investigation_network(
+            self.data_dir / REFERENCE_NAME,
+            step=int(transaction["step"]),
+            sender=str(transaction["sender"]),
+            receiver=str(transaction["receiver"]),
+        )
+        event["network_context_scope"] = (
+            "Reference context covers the prior 24 steps in the immutable V1 data. "
+            "Online counterparties are shown separately from previously scored events."
+        )
+        return event
+
+    def update_live_investigation(
+        self,
+        event_key: str,
+        *,
+        status: str,
+        note: str,
+    ) -> dict[str, str] | None:
+        return self.transaction_history.update_live_investigation(
+            event_key,
+            status=status,
+            note=note,
+        )
+
+    def live_investigation(self, event_key: str) -> dict[str, str] | None:
+        return self.transaction_history.get_live_investigation(event_key)
+
     def alert_operating_points(self) -> list[dict[str, Any]]:
         """Return Model B policies selected on validation and evaluated on test."""
         if self._operating_points_cache is not None:
