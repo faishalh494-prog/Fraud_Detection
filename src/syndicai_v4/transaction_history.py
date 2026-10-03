@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator
@@ -31,10 +33,31 @@ class TransactionHistory:
                     step INTEGER NOT NULL,
                     amount REAL NOT NULL,
                     nameOrig TEXT NOT NULL,
-                    nameDest TEXT NOT NULL
+                    nameDest TEXT NOT NULL,
+                    result_json TEXT,
+                    processed_at TEXT,
+                    flagged_for_review INTEGER,
+                    state_update_ms REAL
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(scored_transactions)"
+                ).fetchall()
+            }
+            migrations = {
+                "result_json": "TEXT",
+                "processed_at": "TEXT",
+                "flagged_for_review": "INTEGER",
+                "state_update_ms": "REAL",
+            }
+            for column, sql_type in migrations.items():
+                if column not in columns:
+                    connection.execute(
+                        f"ALTER TABLE scored_transactions ADD COLUMN {column} {sql_type}"
+                    )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS scored_transactions_step
@@ -116,8 +139,9 @@ class TransactionHistory:
         transaction: dict[str, Any],
         *,
         event_id: str | None = None,
-    ) -> None:
-        """Persist a successfully scored event for later requests."""
+        result: dict[str, Any] | None = None,
+    ) -> float:
+        """Persist a successfully scored event and its monitor result."""
         normalized = self._normalize_event_id(event_id)
         step = int(transaction["step"])
         if step <= self.reference_max_step:
@@ -125,13 +149,26 @@ class TransactionHistory:
                 "Online history accepts only steps greater than the "
                 f"reference maximum step ({self.reference_max_step})"
             )
+        processed_at = pd.Timestamp.now(tz="UTC").isoformat()
+        result_json = (
+            json.dumps(result, separators=(",", ":"), allow_nan=False)
+            if result is not None
+            else None
+        )
+        flagged = (
+            int(bool(result["risk"]["flagged_for_review"]))
+            if result is not None
+            else None
+        )
+        started_at = time.perf_counter()
         try:
             with self._connect() as connection:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     INSERT INTO scored_transactions
-                        (event_id, step, amount, nameOrig, nameDest)
-                    VALUES (?, ?, ?, ?, ?)
+                        (event_id, step, amount, nameOrig, nameDest, result_json,
+                         processed_at, flagged_for_review, state_update_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
                     (
                         normalized,
@@ -139,7 +176,15 @@ class TransactionHistory:
                         float(transaction["amount"]),
                         str(transaction["nameOrig"]),
                         str(transaction["nameDest"]),
+                        result_json,
+                        processed_at,
+                        flagged,
                     ),
+                )
+                state_update_ms = (time.perf_counter() - started_at) * 1000
+                connection.execute(
+                    "UPDATE scored_transactions SET state_update_ms = ? WHERE rowid = ?",
+                    (state_update_ms, cursor.lastrowid),
                 )
         except sqlite3.IntegrityError as error:
             if normalized is not None:
@@ -147,3 +192,60 @@ class TransactionHistory:
                     f"Transaction event_id has already been scored: {normalized}"
                 ) from error
             raise
+        return state_update_ms
+
+    def live_status(self) -> dict[str, Any]:
+        """Summarize successfully scored events available to the live monitor."""
+        with self._connect() as connection:
+            result = connection.execute(
+                """
+                SELECT COUNT(*), COALESCE(SUM(flagged_for_review), 0),
+                       MAX(processed_at)
+                FROM scored_transactions
+                WHERE result_json IS NOT NULL
+                """
+            ).fetchone()
+            latest_online_step = connection.execute(
+                "SELECT MAX(step) FROM scored_transactions"
+            ).fetchone()[0]
+        return {
+            "event_count": int(result[0]),
+            "flagged_event_count": int(result[1]),
+            "latest_processed_at": result[2],
+            "latest_step": int(latest_online_step) if latest_online_step is not None else None,
+        }
+
+    def recent_live_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return stored scoring results, newest first, for authenticated review."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT rowid, event_id, result_json, processed_at, state_update_ms
+                FROM scored_transactions
+                WHERE result_json IS NOT NULL
+                ORDER BY rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row_id, event_id, result_json, processed_at, state_update_ms in rows:
+            result = json.loads(result_json)
+            timings = result.setdefault("timings", {})
+            timings["state_update_ms"] = round(float(state_update_ms or 0), 3)
+            timings["processing_ms"] = round(
+                float(timings.get("feature_ms", 0))
+                + float(timings.get("inference_ms", 0))
+                + float(timings.get("explanation_ms", 0))
+                + float(timings["state_update_ms"]),
+                3,
+            )
+            events.append(
+                {
+                    "event_key": event_id or f"online-event-{row_id}",
+                    "processed_at": processed_at,
+                    "processing_state": "Processed",
+                    **result,
+                }
+            )
+        return events

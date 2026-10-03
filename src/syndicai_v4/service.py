@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -127,8 +129,9 @@ class RiskService:
         )
         self.network = ParquetRowStore(network_path)
         self.online_features = OnlineFeatureBuilder(self.data_dir / REFERENCE_NAME)
+        state_dir = Path(os.environ.get("SYNDICAI_STATE_DIR", self.artifact_dir))
         self.transaction_history = TransactionHistory(
-            self.artifact_dir / "online_history.sqlite",
+            state_dir / "online_history.sqlite",
             reference_max_step=self.reference_max_step,
         )
         self.bundle = joblib.load(bundle_path)
@@ -158,6 +161,15 @@ class RiskService:
 
     def model_summary(self) -> dict[str, Any]:
         return self.metrics
+
+    def live_status(self) -> dict[str, Any]:
+        return {
+            **self.transaction_history.live_status(),
+            "reference_max_step": self.reference_max_step,
+        }
+
+    def recent_live_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.transaction_history.recent_live_events(limit)
 
     def alert_operating_points(self) -> list[dict[str, Any]]:
         """Return Model B policies selected on validation and evaluated on test."""
@@ -346,13 +358,17 @@ class RiskService:
             receiver=str(transaction["nameDest"]),
             before_step=step,
         )
+        feature_started = time.perf_counter()
         values = self.online_features.build(
             transaction,
             model=name,
             additional_history=prior_online_history,
         )
+        feature_ms = (time.perf_counter() - feature_started) * 1000
         feature_frame = pd.DataFrame([values], columns=MODEL_FEATURES[name])
+        inference_started = time.perf_counter()
         score = float(self.bundle[name].predict_proba(feature_frame)[0, 1])
+        inference_ms = (time.perf_counter() - inference_started) * 1000
         if operating_point == "max_f1":
             threshold = float(self.metrics["models"][name]["validation"]["threshold"])
         else:
@@ -367,7 +383,9 @@ class RiskService:
             if selected is None:
                 raise ValueError("Unknown validation-selected alert operating point")
             threshold = float(selected["threshold"])
+        explanation_started = time.perf_counter()
         contributions = explain_prediction(self.bundle[name], feature_frame)
+        explanation_ms = (time.perf_counter() - explanation_started) * 1000
         reasons = [
             {
                 "feature": reason["feature"],
@@ -391,9 +409,18 @@ class RiskService:
             for key in values
             if key.startswith("receiver_") or key.startswith("sender_")
         }
+        transaction_summary = {
+            "step": step,
+            "type": str(transaction["type"]),
+            "amount": float(transaction["amount"]),
+            "sender": str(transaction["nameOrig"]),
+            "receiver": str(transaction["nameDest"]),
+        }
         result = {
             "model": name,
             "operating_point": operating_point,
+            "event_id": event_id,
+            "transaction": transaction_summary,
             "risk": {
                 "score": round(score * 100, 2),
                 "score_kind": "model score; not a calibrated probability",
@@ -416,9 +443,24 @@ class RiskService:
                 "step strictly less than this event were used."
             ),
             "history_updated": True,
+            "timings": {
+                "feature_ms": round(feature_ms, 3),
+                "inference_ms": round(inference_ms, 3),
+                "explanation_ms": round(explanation_ms, 3),
+                "processing_ms": round(
+                    feature_ms + inference_ms + explanation_ms,
+                    3,
+                ),
+            },
         }
-        self.transaction_history.record_scored_transaction(
+        state_update_ms = self.transaction_history.record_scored_transaction(
             transaction,
             event_id=event_id,
+            result=result,
+        )
+        result["timings"]["state_update_ms"] = round(state_update_ms, 3)
+        result["timings"]["processing_ms"] = round(
+            feature_ms + inference_ms + explanation_ms + state_update_ms,
+            3,
         )
         return result

@@ -73,6 +73,8 @@ async def api_key_and_request_audit(request: Request, call_next) -> Response:
     else:
         response = await call_next(request)
 
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    response.headers["X-Process-Time-Ms"] = f"{duration_ms:.3f}"
     logger.info(
         json.dumps(
             {
@@ -81,7 +83,7 @@ async def api_key_and_request_audit(request: Request, call_next) -> Response:
                 "method": request.method,
                 "path": path,
                 "status_code": response.status_code,
-                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "duration_ms": round(duration_ms, 2),
             },
             separators=(",", ":"),
         )
@@ -249,6 +251,37 @@ def transaction_limits() -> dict[str, int]:
         return {"reference_max_step": _service().reference_max_step}
     except FileNotFoundError as error:
         raise HTTPException(status_code=503, detail="Required reference data is unavailable") from error
+
+
+@app.get("/live/status")
+def live_status() -> dict[str, object]:
+    """Return durable event counts and the next valid chronological step."""
+    try:
+        return _service().live_status()
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Required live-scoring artifacts are unavailable",
+        ) from error
+
+
+@app.get("/live/events")
+def live_events(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, object]:
+    """Return recent live scores and their evidence for authenticated review."""
+    try:
+        service = _service()
+        status = service.live_status()
+        return {
+            "event_count": status["event_count"],
+            "events": service.recent_live_events(limit),
+        }
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Required live-scoring artifacts are unavailable",
+        ) from error
 
 
 @app.get("/alerts")

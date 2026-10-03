@@ -106,6 +106,53 @@ refuses protected requests when a sufficiently long key is not configured.
 Structured request/action logs exclude the key, account identifiers, and event
 IDs. Open `http://127.0.0.1:8000/docs` for the API reference.
 
+## Live event monitor and stream demo
+
+`POST /score_transaction` remains the single event-scoring path. The live
+simulator submits each deterministic PaySim-style event over HTTP; the API
+builds prior-only features, scores with Model B, explains the result, and then
+persists both the event and its scoring evidence in local SQLite. The
+**LIVE MONITOR** workflow polls the protected `/live/status` and `/live/events`
+endpoints every two seconds while open. Events sharing a step remain excluded
+from each other's features, and failed events are not added to state.
+
+Start the producer in a separate terminal with the same API key:
+
+```powershell
+$env:SYNDICAI_API_KEY = "<same locally-held value>"
+$env:SYNDICAI_API_URL = "http://127.0.0.1:8000"
+python -m demo.live_stream --interval 1.0
+```
+
+The producer runs continuously until Ctrl+C. Use
+`python -m demo.live_stream --interval 0.2 --max-events 4` for one four-event
+demo. Its first four inputs demonstrate unseen history, developing history,
+changed transaction behaviour, and a high-scoring CASH_OUT. The model scores,
+review priority, and explanation are generated during each request; they are
+not canned. Event IDs are unique and duplicates are rejected. The source
+resumes after the maximum persisted step and immutable reference step.
+
+Benchmark the same real HTTP scorer without an intentional delay:
+
+```powershell
+python -m demo.benchmark_live --events 50
+```
+
+This writes the sequential events to the local SQLite store and prints
+feature, inference, explanation, state-write, end-to-end latency distributions,
+and events/second, together with environment and sample metadata. Results are
+local measurements, not future latency or workload guarantees. Full method,
+measured results, container instructions, and IBM Z/LinuxONE limitations are
+maintained in
+[docs/LIVE_STREAM_AND_DEPLOYMENT.md](docs/LIVE_STREAM_AND_DEPLOYMENT.md).
+
+For a local container deployment (Docker Compose required), set
+`SYNDICAI_API_KEY` in the shell and run `docker compose up --build`. The
+container keeps the processed reference data read-only and the local model /
+SQLite directory writable. This generic container has not been built for or
+validated on IBM Z/LinuxONE; see the deployment note for the current s390x
+dependency blocker and external validation required.
+
 The investigator desk separates historical row-based investigation from
 **New transaction review**. The latter obtains the immutable reference maximum
 step from `GET /transaction_limits`, submits valid new events through
@@ -188,9 +235,12 @@ The optional `event_id` request field enables duplicate protection: a repeated
 ID is rejected with HTTP 409. Without an ID, the API cannot safely infer whether
 an identical-looking request is a retry or a distinct transaction, so each
 successful request is recorded as a new event. The SQLite state survives API
-restarts, but is local prototype state; there are no streaming, latency, or
-concurrency guarantees. Treat this as a transaction-time inference prototype,
-not a production service.
+restarts, but is local prototype state; the event simulator is a sequential
+local live-stream demonstration, not a production streaming service. The API
+returns feature, inference, explanation, and state-write timings and adds an
+`X-Process-Time-Ms` response header; these diagnostics are not latency or
+concurrency guarantees. Treat this as a transaction-time/live-stream
+prototype, not a production service.
 
 Illustrative response shape (numeric values vary with the trained artifacts and
 persisted online history; the full response also includes remaining feature

@@ -13,6 +13,7 @@ import streamlit as st
 
 WORKFLOWS = (
     "OVERVIEW",
+    "LIVE MONITOR",
     "ALERTS",
     "INVESTIGATE",
     "NEW TRANSACTION",
@@ -305,6 +306,115 @@ def page_overview(model: str) -> None:
             "Open Alerts",
             on_click=lambda: st.session_state.update({"dashboard_workflow": "ALERTS"}),
         )
+
+
+@st.fragment(run_every="2s")
+def page_live_monitor() -> None:
+    """Refresh the durable event feed while this workflow is open."""
+    status = load_required("/live/status", "Could not load live-stream status")
+    response = load_required(
+        "/live/events?limit=50",
+        "Could not load recent live events",
+    )
+    events = response["events"]
+    latest = events[0] if events else None
+
+    st.markdown("### Live event monitoring")
+    st.caption(
+        "Incoming events are scored sequentially through Model B and committed "
+        "to SQLite only after feature generation, inference, and explanation succeed. "
+        "This local stream prototype is not a production streaming service."
+    )
+    event_col, alert_col, state_col, latency_col = st.columns(4)
+    event_col.metric("Scored live events", f"{status['event_count']:,}")
+    alert_col.metric("Flagged for review", f"{status['flagged_event_count']:,}")
+    state_col.metric(
+        "Latest event",
+        "Done" if latest else "Waiting",
+    )
+    latency_col.metric(
+        "Latest processing work",
+        f"{latest['timings']['processing_ms']:.1f} ms" if latest else "—",
+    )
+    st.caption(
+        "Automatic refresh every 2 seconds · "
+        f"latest step: {status['latest_step'] if status['latest_step'] is not None else 'none'} · "
+        f"latest receipt: {status['latest_processed_at'] or 'no events yet'}"
+    )
+
+    if not events:
+        st.info(
+            "No scored live events yet. Start the API, then run "
+            "`python -m demo.live_stream --interval 1.0` in another terminal."
+        )
+        return
+
+    st.markdown("#### Latest events")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Event": event["event_key"],
+                    "Step": event["transaction"]["step"],
+                    "Transaction": event["transaction"]["type"],
+                    "Amount": event["transaction"]["amount"],
+                    "Risk score": event["risk"]["score"],
+                    "Review priority": event["risk"]["review_priority"],
+                    "Flagged": event["risk"]["flagged_for_review"],
+                    "Behavioural history": event["evidence_strength"]["status"],
+                    "Processing": event["processing_state"],
+                }
+                for event in events
+            ]
+        ).style.format(
+            {"Amount": "{:,.2f}", "Risk score": "{:.2f}/100"}
+        ),
+        hide_index=True,
+        width="stretch",
+        height=320,
+    )
+
+    flagged_events = [
+        event for event in events if event["risk"]["flagged_for_review"]
+    ]
+    review_options = flagged_events or events
+    event_lookup = {event["event_key"]: event for event in review_options}
+    selected_key = st.selectbox(
+        "Open a live event for investigation",
+        list(event_lookup),
+        format_func=lambda key: (
+            f"{event_lookup[key]['transaction']['type']} · "
+            f"step {event_lookup[key]['transaction']['step']} · "
+            f"score {event_lookup[key]['risk']['score']:.2f}/100"
+        ),
+        key="live_event_choice",
+    )
+    selected = event_lookup[selected_key]
+    st.markdown("#### Live investigation")
+    transaction = selected["transaction"]
+    st.write(
+        f"**{transaction['type']}** · step **{transaction['step']}** · "
+        f"amount **{transaction['amount']:,.2f}**"
+    )
+    st.text(f"Sender: {transaction['sender']}  →  Receiver: {transaction['receiver']}")
+    render_risk_assessment(selected["risk"])
+    render_evidence_strength(selected["evidence_strength"])
+    render_explanation(
+        selected["explanation"],
+        flagged=selected["risk"]["flagged_for_review"],
+    )
+    st.markdown("#### Behaviour before this event")
+    render_behaviour(
+        selected["behavioural_evidence"],
+        empty_message="This event did not use behavioural features.",
+    )
+    st.caption(
+        f"Event {selected['event_key']} · "
+        f"feature {selected['timings']['feature_ms']:.2f} ms · "
+        f"inference {selected['timings']['inference_ms']:.2f} ms · "
+        f"explanation {selected['timings']['explanation_ms']:.2f} ms · "
+        f"state write {selected['timings']['state_update_ms']:.2f} ms"
+    )
 
 
 def page_alerts(model: str) -> None:
@@ -694,6 +804,7 @@ st.markdown(
       .desk-subtitle { color: var(--muted); margin-bottom: .6rem; }
       [data-testid="stCaptionContainer"] { color: var(--muted); }
       [data-testid="stWidgetLabel"] p { color: #263d4f; font-weight: 600; }
+      div[data-testid="stRadio"] label p { color: #263d4f !important; }
       div[data-testid="stMetric"] { background: #fff; border: 1px solid var(--line);
                                     border-radius: 5px; padding: .75rem .9rem; }
       div[data-testid="stMetric"] label { color: #405565 !important; }
@@ -736,6 +847,8 @@ else:
 
 if workflow == "OVERVIEW":
     page_overview(selected_model)
+elif workflow == "LIVE MONITOR":
+    page_live_monitor()
 elif workflow == "ALERTS":
     page_alerts(selected_model)
 elif workflow == "INVESTIGATE":
